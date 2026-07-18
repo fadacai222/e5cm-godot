@@ -4,10 +4,10 @@ E5CM 是一个使用 Godot 4.6.2 重制的 Windows 舞蹈节奏游戏项目。
 
 ## 当前版本
 
-- 版本：`0.9.0`
+- 版本：`0.9.1`
 - 平台：Windows x64
 - 便携版：`release/E5CM/E5CM.exe`
-- 安装包：`release/E5CM-Setup-0.9.0.exe`
+- 安装包：`release/E5CM-Setup-0.9.1.exe`
 - 默认安装位置：`%USERPROFILE%\Documents\E5CM`
 - 安装后自动创建当前用户桌面快捷方式
 
@@ -66,6 +66,7 @@ powershell -ExecutionPolicy Bypass -File tools/release/smoke_installer.ps1
 - 默认文件完整性检查
 - 桌面快捷方式检查
 - 已安装 EXE 启动
+- 导出包内启动图、背景、按钮、7 类 UI 图集、12 个 BGM/音效及视频资源加载自检
 - 静默卸载与测试痕迹清理
 
 ## 注意

@@ -118,8 +118,17 @@ func is_song_path(path: String) -> bool:
 		or normalized == "songs" or normalized.begins_with("songs/")
 
 
+func resource_exists(path: String) -> bool:
+	var normalized := path.replace("\\", "/")
+	# 导出包只保留 Godot 导入产物和 remap，原始 png/mp3 通常不在 PCK 中。
+	# ResourceLoader.exists() 能识别 remap；FileAccess.file_exists() 只适合原始/外置文件。
+	if normalized.begins_with("res://") and ResourceLoader.exists(normalized):
+		return true
+	return FileAccess.file_exists(normalized)
+
+
 func _path_exists(path: String) -> bool:
-	return FileAccess.file_exists(path) or DirAccess.open(path) != null
+	return resource_exists(path) or DirAccess.open(path) != null
 
 ## 旧项目资源相对路径表（节选自 core/常量与路径.py::默认资源路径）
 const RES := {
@@ -195,7 +204,7 @@ func res_path(key: String) -> String:
 ## 按键名取音频路径（给 AudioDirector 用）
 func sound(key: String) -> String:
 	var p := res_path(key)
-	return p if FileAccess.file_exists(p) else ""
+	return p if resource_exists(p) else ""
 
 
 ## 加载纹理。核心 UI 可常驻；歌曲封面只保留最近 24 张，翻页不会无限吃内存。
@@ -320,7 +329,7 @@ func atlas(rel_dir: String) -> Dictionary:
 	var result := {}
 	var json_path := dir.path_join("skin.json")
 	var png_path := dir.path_join("skin.png")
-	if FileAccess.file_exists(json_path) and FileAccess.file_exists(png_path):
+	if FileAccess.file_exists(json_path) and resource_exists(png_path):
 		var sheet := tex(png_path)
 		var data = JSON.parse_string(FileAccess.get_file_as_string(json_path))
 		if sheet != null and data is Dictionary and data.get("frames") is Array:

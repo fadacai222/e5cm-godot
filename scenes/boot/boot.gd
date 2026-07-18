@@ -12,6 +12,9 @@ var _sequence_tween: Tween
 
 
 func _ready() -> void:
+	if OS.get_environment("E5CM_RELEASE_ASSET_PROBE") == "1":
+		call_deferred("_run_release_asset_probe")
+		return
 	if root_has_status_hud():
 		StatusHud.visible = false
 	PublicSystemMenu.visible = false
@@ -21,6 +24,43 @@ func _ready() -> void:
 		_finish()
 		return
 	_play_sequence()
+
+
+func _run_release_asset_probe() -> void:
+	await get_tree().process_frame
+	var checks := {
+		"startup_texture": AssetLoader.tex(STARTUP_IMAGE) != null,
+		"song_select_background": AssetLoader.tex_key("背景_选歌") != null,
+		"player_button_texture": AssetLoader.tex_key("1P按钮") != null,
+		"arrow_atlas": not AssetLoader.arrow_atlas("原版默认").is_empty(),
+		"key_atlas": not AssetLoader.key_atlas("原版默认").is_empty(),
+		"judge_atlas": not AssetLoader.judge_atlas("原版默认").is_empty(),
+		"number_atlas": not AssetLoader.number_atlas("原版默认").is_empty(),
+		"key_effect_atlas": not AssetLoader.key_effect_atlas("原版默认").is_empty(),
+		"blood_bar_atlas": not AssetLoader.blood_bar_atlas().is_empty(),
+		"judge_text_atlas": not AssetLoader.judge_text_atlas().is_empty(),
+		"player_select_video": AssetLoader.resource_exists(AssetLoader.res_path("视频_玩家")),
+	}
+	var sound_keys := [
+		"音乐_UI", "音乐_开始", "音乐_show", "音乐_devil", "音乐_remix", "音乐_club",
+		"刷卡音效", "开始游戏", "准备就绪音效", "百连突破音效", "结算音效", "gameover",
+	]
+	for sound_key in sound_keys:
+		var path := AssetLoader.sound(sound_key)
+		checks["sound_%s" % sound_key] = not path.is_empty() \
+				and ResourceLoader.exists(path) \
+				and load(path) is AudioStream
+	var failed: Array[String] = []
+	for key in checks:
+		if not bool(checks[key]):
+			failed.append(str(key))
+	print("E5CM_RELEASE_ASSET_PROBE=%s" % JSON.stringify(checks))
+	if failed.is_empty():
+		print("E5CM_RELEASE_ASSET_PROBE_PASSED")
+		get_tree().quit(0)
+	else:
+		printerr("E5CM_RELEASE_ASSET_PROBE_FAILED=%s" % ",".join(failed))
+		get_tree().quit(41)
 
 
 func root_has_status_hud() -> bool:

@@ -1,0 +1,537 @@
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+VERSION = "0.9.1"
+FILE_VERSION = "0.9.1.0"
+SEED = "20260718-e5cm-release"
+MAX_SONGS_PER_MODE = 4
+MAX_RANDOM_FOLDER_BYTES = 180 * 1024 * 1024
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+STAGING_ROOT = PROJECT_ROOT / ".release-staging"
+STAGING_SONGS = STAGING_ROOT / "songs"
+RELEASE_ROOT = PROJECT_ROOT / "release"
+PORTABLE_ROOT = RELEASE_ROOT / "E5CM"
+PORTABLE_SONGS = PORTABLE_ROOT / "songs"
+INDEX_PATH = PROJECT_ROOT / "assets" / "e5cm_runtime" / "song_index.json"
+INDEX_BACKUP = PROJECT_ROOT / ".release-backup" / "original-song_index.json"
+SAMPLE_INDEX = STAGING_ROOT / "release-song_index.json"
+SELECTION_MANIFEST = STAGING_ROOT / "release-song-selection.json"
+ARCHIVE_ROOT = PROJECT_ROOT.parent / "e5cm-godot-archive-20260718"
+FULL_SONGS_ARCHIVE = ARCHIVE_ROOT / "full-songs"
+DEV_ARCHIVE = ARCHIVE_ROOT / "development-files"
+
+CHART_EXTENSIONS = {".sm", ".ssc", ".json"}
+AUDIO_EXTENSIONS = {".mp3", ".ogg"}
+PATH_FIELDS = ("sm", "mp3", "cover", "video")
+
+
+def log(message: str) -> None:
+    print(message, flush=True)
+
+
+def fail(message: str) -> None:
+    raise RuntimeError(message)
+
+
+def directory_size(path: Path) -> int:
+    total = 0
+    for root, _, files in os.walk(path):
+        for filename in files:
+            try:
+                total += (Path(root) / filename).stat().st_size
+            except OSError:
+                pass
+    return total
+
+
+def deterministic_key(relative_path: str) -> str:
+    return hashlib.sha256(f"{SEED}|{relative_path}".encode("utf-8")).hexdigest()
+
+
+def is_release_playable(song_dir: Path) -> bool:
+    try:
+        files = [item for item in song_dir.iterdir() if item.is_file()]
+    except OSError:
+        return False
+    has_chart = any(item.suffix.lower() in CHART_EXTENSIONS for item in files)
+    has_audio = any(item.suffix.lower() in AUDIO_EXTENSIONS for item in files)
+    return has_chart and has_audio
+
+
+def locate_full_song_library() -> Path:
+    project_songs = PROJECT_ROOT / "songs"
+    if project_songs.is_dir():
+        song_folder_count = sum(
+            1
+            for top in project_songs.iterdir()
+            if top.is_dir()
+            for sub in top.iterdir()
+            if sub.is_dir()
+            for song in sub.iterdir()
+            if song.is_dir()
+        )
+        if song_folder_count > 100:
+            return project_songs
+    if FULL_SONGS_ARCHIVE.is_dir():
+        return FULL_SONGS_ARCHIVE
+    fail("找不到完整曲库：项目 songs 已不是全量曲库，归档目录也不存在。")
+
+
+def enumerate_mode_leaves(song_root: Path) -> list[Path]:
+    leaves: list[Path] = []
+    for top in sorted((item for item in song_root.iterdir() if item.is_dir()), key=lambda p: p.name):
+        for sub in sorted((item for item in top.iterdir() if item.is_dir()), key=lambda p: p.name):
+            leaves.append(sub)
+    if not leaves:
+        fail(f"曲库没有可用模式目录：{song_root}")
+    return leaves
+
+
+def choose_songs(song_root: Path) -> dict[str, dict[str, Any]]:
+    selection: dict[str, dict[str, Any]] = {}
+    for leaf in enumerate_mode_leaves(song_root):
+        relative_leaf = leaf.relative_to(song_root).as_posix()
+        candidates: list[Path] = []
+        for song_dir in sorted((item for item in leaf.iterdir() if item.is_dir()), key=lambda p: p.name):
+            if is_release_playable(song_dir):
+                candidates.append(song_dir)
+        if not candidates:
+            selection[relative_leaf] = {
+                "availablePlayableFolders": 0,
+                "selectedCount": 0,
+                "selected": [],
+                "excludedReason": "源曲库只有占位或缺少可播放音频/谱面",
+            }
+            continue
+
+        # 先按稳定随机键排序，再只计算实际候选的目录大小；避免为了抽 4 首遍历整套 51GB 曲库。
+        candidates.sort(key=lambda path: deterministic_key(path.relative_to(song_root).as_posix()))
+        chosen: list[tuple[Path, int]] = []
+        oversized: list[tuple[Path, int]] = []
+        for song_dir in candidates:
+            size = directory_size(song_dir)
+            if size <= MAX_RANDOM_FOLDER_BYTES:
+                chosen.append((song_dir, size))
+                if len(chosen) >= MAX_SONGS_PER_MODE:
+                    break
+            else:
+                oversized.append((song_dir, size))
+        if len(chosen) < MAX_SONGS_PER_MODE:
+            chosen.extend(oversized[: MAX_SONGS_PER_MODE - len(chosen)])
+        selection[relative_leaf] = {
+            "availablePlayableFolders": len(candidates),
+            "selectedCount": len(chosen),
+            "selected": [
+                {
+                    "folder": song_dir.name,
+                    "relativePath": song_dir.relative_to(song_root).as_posix(),
+                    "bytes": size,
+                }
+                for song_dir, size in chosen
+            ],
+        }
+    return selection
+
+
+def copy_selected_songs(song_root: Path, selection: dict[str, dict[str, Any]], destination: Path) -> None:
+    if destination.exists():
+        shutil.rmtree(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / ".gdignore").touch()
+    for relative_leaf, payload in selection.items():
+        if not payload["selected"]:
+            continue
+        target_leaf = destination / Path(relative_leaf)
+        target_leaf.mkdir(parents=True, exist_ok=True)
+        for item in payload["selected"]:
+            source = song_root / Path(item["relativePath"])
+            target = destination / Path(item["relativePath"])
+            shutil.copytree(source, target, ignore=shutil.ignore_patterns("*.import"))
+
+
+def locate_full_index() -> Path:
+    if INDEX_BACKUP.is_file():
+        try:
+            data = json.loads(INDEX_BACKUP.read_text(encoding="utf-8"))
+            if int(data.get("songVariantCount", 0)) > 1000:
+                return INDEX_BACKUP
+        except (OSError, json.JSONDecodeError):
+            pass
+    archived = DEV_ARCHIVE / "original-song_index.json"
+    if archived.is_file():
+        return archived
+    if INDEX_PATH.is_file():
+        data = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+        if int(data.get("songVariantCount", 0)) > 1000:
+            return INDEX_PATH
+    fail("找不到完整 song_index.json，无法生成精选发行索引。")
+
+
+def rewrite_song_path(value: Any) -> Any:
+    if not isinstance(value, str) or not value:
+        return value
+    normalized = value.replace("\\", "/")
+    prefixes = (
+        "res://assets/e5cm_runtime/songs/",
+        "res://songs/",
+    )
+    for prefix in prefixes:
+        if normalized.startswith(prefix):
+            return "res://songs/" + normalized[len(prefix) :]
+    marker = "/songs/"
+    if marker in normalized:
+        return "res://songs/" + normalized.split(marker, 1)[1]
+    return normalized
+
+
+def build_release_index(selection: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    full_index_path = locate_full_index()
+    full_index = json.loads(full_index_path.read_text(encoding="utf-8"))
+    full_songs_by_key = full_index.get("songsByKey", {})
+    release_songs_by_key: dict[str, list[dict[str, Any]]] = {}
+    submodes_by_mode: dict[str, list[str]] = {}
+    total_variants = 0
+
+    for relative_leaf, payload in selection.items():
+        if not payload["selected"]:
+            continue
+        top, submode = relative_leaf.split("/", 1)
+        mode = "DIY" if top.lower() == "diy" else top
+        key = f"{mode}/{submode}"
+        selected_folders = {str(item["folder"]) for item in payload["selected"]}
+        raw_entries = full_songs_by_key.get(key)
+        if not isinstance(raw_entries, list):
+            fail(f"完整索引缺少模式键：{key}")
+        entries: list[dict[str, Any]] = []
+        for raw_entry in raw_entries:
+            if not isinstance(raw_entry, dict) or str(raw_entry.get("folder", "")) not in selected_folders:
+                continue
+            entry = dict(raw_entry)
+            for field in PATH_FIELDS:
+                if field in entry:
+                    entry[field] = rewrite_song_path(entry[field])
+            entries.append(entry)
+        missing = selected_folders - {str(entry.get("folder", "")) for entry in entries}
+        if missing:
+            fail(f"精选歌曲没有出现在静态索引 {key}：{sorted(missing)}")
+        release_songs_by_key[key] = entries
+        submodes_by_mode.setdefault(mode, []).append(submode)
+        total_variants += len(entries)
+
+    for mode in submodes_by_mode:
+        submodes_by_mode[mode] = sorted(submodes_by_mode[mode])
+
+    release_index = {
+        "schemaVersion": 1,
+        "generatedAtUnix": int(time.time()),
+        "runtimeRoot": "res://songs",
+        "releaseVersion": VERSION,
+        "releaseSeed": SEED,
+        "submodesByMode": submodes_by_mode,
+        "songsByKey": release_songs_by_key,
+        "songVariantCount": total_variants,
+    }
+    return release_index
+
+
+def build_release_index_with_godot() -> dict[str, Any]:
+    godot = os.environ.get("E5CM_GODOT_CONSOLE", "").strip()
+    if not godot:
+        godot = str(PROJECT_ROOT.parent / "Godot_v4.6.2-stable_win64_console.exe")
+    if not Path(godot).is_file():
+        fail(f"未找到 Godot 控制台：{godot}")
+    env = os.environ.copy()
+    env["E5CM_RELEASE_SONGS_ROOT"] = str(STAGING_SONGS)
+    env["E5CM_RELEASE_INDEX_PATH"] = str(SAMPLE_INDEX)
+    env["E5CM_RELEASE_VERSION"] = VERSION
+    env["PYTHONUTF8"] = "1"
+    subprocess.run(
+        [
+            godot,
+            "--headless",
+            "--path",
+            str(PROJECT_ROOT),
+            "--script",
+            "res://tools/release/build_selected_song_index.gd",
+        ],
+        check=True,
+        env=env,
+        cwd=PROJECT_ROOT,
+    )
+    if not SAMPLE_INDEX.is_file():
+        fail("Godot 没有生成精选发行索引。")
+    return json.loads(SAMPLE_INDEX.read_text(encoding="utf-8"))
+
+
+def verify_release_index(index: dict[str, Any], songs_root: Path) -> None:
+    missing: list[str] = []
+    for entries in index.get("songsByKey", {}).values():
+        for entry in entries:
+            for field in ("sm", "mp3", "cover"):
+                value = str(entry.get(field, ""))
+                if not value:
+                    continue
+                if not value.startswith("res://songs/"):
+                    missing.append(f"非发行路径：{value}")
+                    continue
+                target = songs_root / Path(value.removeprefix("res://songs/"))
+                if not target.is_file():
+                    missing.append(value)
+    if missing:
+        fail("发行索引存在缺失资源：\n" + "\n".join(missing[:30]))
+
+
+def generate_brand_icon() -> None:
+    source = PROJECT_ROOT / "assets" / "ui" / "player_select" / "logo.png"
+    branding = PROJECT_ROOT / "assets" / "branding"
+    branding.mkdir(parents=True, exist_ok=True)
+    png_target = branding / "e5cm_icon.png"
+    ico_target = branding / "e5cm.ico"
+    magick = shutil.which("magick.exe") or shutil.which("magick")
+    if not magick:
+        fail("未找到 ImageMagick magick.exe，无法生成游戏 Logo 图标。")
+    common = [
+        magick,
+        str(source),
+        "-background",
+        "none",
+        "-gravity",
+        "center",
+        "-extent",
+        "1162x1162",
+    ]
+    subprocess.run(common + ["-resize", "512x512", str(png_target)], check=True)
+    subprocess.run(
+        common
+        + [
+            "-resize",
+            "256x256",
+            "-define",
+            "icon:auto-resize=256,128,64,48,32,16",
+            str(ico_target),
+        ],
+        check=True,
+    )
+
+
+def prepare() -> None:
+    song_root = locate_full_song_library()
+    log(f"FULL_SONGS={song_root}")
+    if STAGING_ROOT.exists():
+        shutil.rmtree(STAGING_ROOT)
+    STAGING_ROOT.mkdir(parents=True, exist_ok=True)
+    if PORTABLE_ROOT.exists():
+        shutil.rmtree(PORTABLE_ROOT)
+    PORTABLE_ROOT.mkdir(parents=True, exist_ok=True)
+
+    selection = choose_songs(song_root)
+    copy_selected_songs(song_root, selection, STAGING_SONGS)
+    release_index = build_release_index_with_godot()
+    verify_release_index(release_index, STAGING_SONGS)
+
+    total_selected = sum(int(item["selectedCount"]) for item in selection.values())
+    total_bytes = sum(
+        int(song["bytes"])
+        for item in selection.values()
+        for song in item["selected"]
+    )
+    manifest = {
+        "releaseVersion": VERSION,
+        "fileVersion": FILE_VERSION,
+        "selectionSeed": SEED,
+        "maxSongsPerPlayableMode": MAX_SONGS_PER_MODE,
+        "playableModeCount": sum(1 for item in selection.values() if item["selectedCount"] > 0),
+        "selectedSongFolderCount": total_selected,
+        "selectedBytes": total_bytes,
+        "note": "少于 4 首的模式会全部保留，不复制同一歌曲凑数。",
+        "modes": selection,
+    }
+    SELECTION_MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    SAMPLE_INDEX.write_text(json.dumps(release_index, ensure_ascii=False), encoding="utf-8")
+
+    INDEX_BACKUP.parent.mkdir(parents=True, exist_ok=True)
+    if not INDEX_BACKUP.is_file() and INDEX_PATH.is_file():
+        shutil.copy2(INDEX_PATH, INDEX_BACKUP)
+    shutil.copy2(SAMPLE_INDEX, INDEX_PATH)
+    generate_brand_icon()
+
+    shutil.copytree(STAGING_SONGS, PORTABLE_SONGS)
+    shutil.copy2(SELECTION_MANIFEST, PORTABLE_ROOT / "release-song-selection.json")
+    (PORTABLE_ROOT / "版本信息.txt").write_text(
+        f"E5CM {VERSION}\n每个可玩模式随机保留最多 4 首歌曲。\n"
+        f"抽样种子：{SEED}\n歌曲文件夹：{total_selected}\n",
+        encoding="utf-8",
+    )
+    playable_mode_count = sum(1 for item in selection.values() if item["selectedCount"] > 0)
+    excluded_modes = [key for key, item in selection.items() if item["selectedCount"] == 0]
+    log(f"PLAYABLE_MODES={playable_mode_count}")
+    log(f"EXCLUDED_EMPTY_MODES={excluded_modes}")
+    log(f"SELECTED_SONG_FOLDERS={total_selected}")
+    log(f"SELECTED_BYTES={total_bytes}")
+    log(f"SONG_VARIANTS={release_index['songVariantCount']}")
+    log(f"PORTABLE_ROOT={PORTABLE_ROOT}")
+
+
+def restore_index() -> None:
+    if not INDEX_BACKUP.is_file():
+        fail("没有找到原始索引备份。")
+    shutil.copy2(INDEX_BACKUP, INDEX_PATH)
+    log("原始完整曲库索引已恢复。")
+
+
+def verify_portable() -> None:
+    manifest_path = PORTABLE_ROOT / "release-song-selection.json"
+    if not manifest_path.is_file():
+        fail("发行目录缺少 release-song-selection.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for relative_leaf, payload in manifest["modes"].items():
+        leaf = PORTABLE_SONGS / Path(relative_leaf)
+        actual = sorted(item.name for item in leaf.iterdir() if item.is_dir()) if leaf.is_dir() else []
+        expected = sorted(str(item["folder"]) for item in payload["selected"])
+        if actual != expected:
+            fail(f"发行曲库不一致 {relative_leaf}: actual={actual} expected={expected}")
+        if len(actual) > MAX_SONGS_PER_MODE:
+            fail(f"模式超过 4 首：{relative_leaf}={len(actual)}")
+    if not (PORTABLE_ROOT / "E5CM.exe").is_file():
+        fail("发行目录缺少 E5CM.exe")
+    if not (PORTABLE_ROOT / "E5CM.pck").is_file():
+        fail("发行目录缺少 E5CM.pck")
+    log("PORTABLE_RELEASE_VERIFIED")
+
+
+def move_to_archive(source: Path, target: Path) -> None:
+    if not source.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        fail(f"归档目标已存在，拒绝覆盖：{target}")
+    shutil.move(str(source), str(target))
+
+
+def finalize() -> None:
+    verify_portable()
+    installer = RELEASE_ROOT / f"E5CM-Setup-{VERSION}.exe"
+    smoke_marker = STAGING_ROOT / "installer-smoke-passed.txt"
+    if not installer.is_file():
+        fail(f"安装包不存在：{installer}")
+    if not smoke_marker.is_file():
+        fail("安装包烟测标记不存在，禁止归档完整曲库。")
+
+    # 只保留当前正式安装包，避免用户误点已经确认有问题的旧版本。
+    for old_installer in RELEASE_ROOT.glob("E5CM-Setup-*.exe"):
+        if old_installer != installer:
+            old_installer.unlink()
+            log(f"REMOVED_OBSOLETE_INSTALLER={old_installer}")
+
+    ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
+    DEV_ARCHIVE.mkdir(parents=True, exist_ok=True)
+
+    project_songs = PROJECT_ROOT / "songs"
+    if FULL_SONGS_ARCHIVE.exists():
+        # 支持上一次整理在后续垃圾文件删除处中断后的安全续跑。
+        current_song_folders = sum(1 for path in project_songs.rglob("*") if path.is_dir()) \
+            if project_songs.is_dir() else 0
+        if current_song_folders > 200:
+            fail(f"完整曲库归档已存在，但项目 songs 仍像全量曲库，拒绝覆盖：{FULL_SONGS_ARCHIVE}")
+        log("完整曲库已经归档，继续完成剩余清理。")
+    else:
+        move_to_archive(project_songs, FULL_SONGS_ARCHIVE)
+        shutil.copytree(PORTABLE_SONGS, project_songs)
+    if not project_songs.is_dir():
+        shutil.copytree(PORTABLE_SONGS, project_songs)
+
+    if INDEX_BACKUP.is_file():
+        shutil.copy2(INDEX_BACKUP, DEV_ARCHIVE / "original-song_index.json")
+    shutil.copy2(SAMPLE_INDEX, INDEX_PATH)
+
+    archive_items = [
+        "AGENTS.md",
+        "继续开发入口.md",
+        "人工差异修复进度.md",
+        "docs",
+        "tasks",
+        "parity",
+        "预开发任务资源",
+        "清理旧AI产物.ps1",
+        "迁移曲库到项目外并清理缓存.bat",
+        "启动E5CM.bat",
+    ]
+    for relative in archive_items:
+        source = PROJECT_ROOT / relative
+        if source.exists():
+            move_to_archive(source, DEV_ARCHIVE / relative)
+
+    removable = [
+        PROJECT_ROOT / ".godot",
+        PROJECT_ROOT / "icon.svg",
+        PROJECT_ROOT / "icon.svg.import",
+        PROJECT_ROOT / "nul",
+    ]
+    for path in removable:
+        if path.is_dir():
+            shutil.rmtree(path)
+        elif path.exists():
+            try:
+                path.unlink()
+            except PermissionError:
+                # Windows 保留设备名（例如历史残留的 nul）必须使用扩展路径语法删除。
+                extended = Path("\\\\?\\" + str(path.resolve()))
+                try:
+                    os.unlink(extended)
+                except FileNotFoundError:
+                    pass
+
+    archive_manifest = {
+        "createdAtUnix": int(time.time()),
+        "releaseVersion": VERSION,
+        "project": str(PROJECT_ROOT),
+        "fullSongs": str(FULL_SONGS_ARCHIVE),
+        "developmentFiles": str(DEV_ARCHIVE),
+        "selectedSongs": str(project_songs),
+        "installer": str(installer),
+    }
+    (ARCHIVE_ROOT / "archive-manifest.json").write_text(
+        json.dumps(archive_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    log(f"FULL_SONGS_ARCHIVED={FULL_SONGS_ARCHIVE}")
+    log(f"DEV_FILES_ARCHIVED={DEV_ARCHIVE}")
+
+    # 发布完成后移除只用于本次构建的隐藏暂存目录；完整原索引已进入同级归档。
+    for transient in [STAGING_ROOT, PROJECT_ROOT / ".release-backup"]:
+        if transient.is_dir():
+            shutil.rmtree(transient)
+    log("PROJECT_CLEANUP_FINALIZED")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="E5CM release builder")
+    parser.add_argument("command", choices=("prepare", "restore-index", "verify", "finalize"))
+    args = parser.parse_args()
+    try:
+        if args.command == "prepare":
+            prepare()
+        elif args.command == "restore-index":
+            restore_index()
+        elif args.command == "verify":
+            verify_portable()
+        elif args.command == "finalize":
+            finalize()
+        return 0
+    except Exception as exc:  # noqa: BLE001 - release script must report all failures clearly.
+        print(f"RELEASE_ERROR: {exc}", file=sys.stderr, flush=True)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="E5CM"
-config/version="0.9.0"
+config/version="0.9.1"
 run/main_scene="res://scenes/boot/boot.tscn"
 config/features=PackedStringArray("4.6")
 run/max_fps=240

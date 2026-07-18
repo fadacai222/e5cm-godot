@@ -4,7 +4,7 @@
 *.tmp
 
 # Release/build output
-release/
+/release/
 build/
 .release-staging/
 .release-backup/

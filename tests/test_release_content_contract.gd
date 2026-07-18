@@ -56,6 +56,7 @@ func _initialize() -> void:
 		return
 
 	var songs_by_key: Dictionary = index.get("songsByKey", {})
+	_check(str(index.get("releaseVersion", "")) == "0.9.1", "发行索引版本与安装包一致")
 	_check(int(index.get("songVariantCount", 0)) == 44, "发行索引只包含 44 个精选谱面")
 	_check(songs_by_key.size() == 11, "发行版只显示 11 个真实可玩模式")
 	_check(not songs_by_key.has("竞速/情侣") and not songs_by_key.has("花式/情侣"),
@@ -83,7 +84,7 @@ func _initialize() -> void:
 	_check(not _has_import_sidecar("res://songs"), "精选曲库不携带无用 .import 边车")
 	_check(FileAccess.file_exists("res://release/E5CM/E5CM.exe")
 		and FileAccess.file_exists("res://release/E5CM/E5CM.pck")
-		and FileAccess.file_exists("res://release/E5CM-Setup-0.9.0.exe"),
+		and FileAccess.file_exists("res://release/E5CM-Setup-0.9.1.exe"),
 		"便携版 EXE/PCK 与安装包均已生成")
 
 	print("ALL RELEASE CONTENT CONTRACT TESTS PASSED" if _failures == 0 else

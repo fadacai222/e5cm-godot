@@ -32,7 +32,7 @@ func _ready() -> void:
 	_player.volume_db = -80.0
 	_player.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var video_path := AssetLoader.res_path("视频_玩家")
-	if video_path.begins_with("res://") and FileAccess.file_exists(video_path) \
+	if video_path.begins_with("res://") and AssetLoader.resource_exists(video_path) \
 		and ClassDB.class_exists("FFmpegVideoStream"):
 		var video_stream := load(video_path)
 		if video_stream is VideoStream:
