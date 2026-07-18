@@ -1,0 +1,100 @@
+{"frames": [
+
+{
+	"filename": "text_pf2_0.png",
+	"frame": {"x":56,"y":160,"w":58,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":58,"h":80},
+	"sourceSize": {"w":58,"h":80}
+},
+{
+	"filename": "text_pf2_1.png",
+	"frame": {"x":0,"y":0,"w":44,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":44,"h":80},
+	"sourceSize": {"w":44,"h":80}
+},
+{
+	"filename": "text_pf2_2.png",
+	"frame": {"x":44,"y":0,"w":54,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":54,"h":80},
+	"sourceSize": {"w":54,"h":80}
+},
+{
+	"filename": "text_pf2_3.png",
+	"frame": {"x":98,"y":0,"w":54,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":54,"h":80},
+	"sourceSize": {"w":54,"h":80}
+},
+{
+	"filename": "text_pf2_4.png",
+	"frame": {"x":54,"y":80,"w":56,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":56,"h":80},
+	"sourceSize": {"w":56,"h":80}
+},
+{
+	"filename": "text_pf2_5.png",
+	"frame": {"x":110,"y":80,"w":56,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":56,"h":80},
+	"sourceSize": {"w":56,"h":80}
+},
+{
+	"filename": "text_pf2_6.png",
+	"frame": {"x":166,"y":80,"w":56,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":56,"h":80},
+	"sourceSize": {"w":56,"h":80}
+},
+{
+	"filename": "text_pf2_7.png",
+	"frame": {"x":0,"y":160,"w":56,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":56,"h":80},
+	"sourceSize": {"w":56,"h":80}
+},
+{
+	"filename": "text_pf2_8.png",
+	"frame": {"x":152,"y":0,"w":54,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":54,"h":80},
+	"sourceSize": {"w":54,"h":80}
+},
+{
+	"filename": "text_pf2_9.png",
+	"frame": {"x":0,"y":80,"w":54,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":54,"h":80},
+	"sourceSize": {"w":54,"h":80}
+},
+{
+	"filename": "text_pf2_x.png",
+	"frame": {"x":114,"y":160,"w":64,"h":80},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":64,"h":80},
+	"sourceSize": {"w":64,"h":80}
+}],
+"meta": {
+	"app": "https://www.codeandweb.com/texturepacker",
+	"version": "1.0",
+	"image": "skin.png",
+	"format": "RGBA8888",
+	"size": {"w":222,"h":240},
+	"scale": "1",
+	"smartupdate": "$TexturePacker:SmartUpdate:4d6aa0360978ea95c445ca6abb1191da:b2511046c99be36893213676e3a8c58c:7a403c0f1de4950c4b2f4e76483f7a97$"
+}
+}

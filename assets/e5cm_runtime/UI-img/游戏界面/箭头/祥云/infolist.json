@@ -1,0 +1,51 @@
+{
+    "context": {
+        "id": 363,
+        "name": "",
+        "pack_md5": "88f9cab6b43740651d69967c3df2a170",
+        "pack_url": "https://act-res.singworld.cn/rc-upload-1726210921017-12.zip",
+        "player_number": 1,
+        "type": 0
+    },
+    "file_md5_list": [
+        {
+            "arrow/skin.png": "BA9FF0DCE068F5C934072FAAF69C2279"
+        },
+        {
+            "arrow/skin.json": "15F2F35371D8B456656284A1CCB62834"
+        },
+        {
+            "judge/skin.png": "297E48778FCE9F407CFEC0049FEAFD38"
+        },
+        {
+            "judge/skin.json": "6382B7566B7A0AB3761431C66DCFCBA8"
+        },
+        {
+            "number/skin.png": "0A948AA442D6C2BB059C8497FEA3083E"
+        },
+        {
+            "number/skin.json": "C27F88C427C7049839B2D1623090A2D3"
+        },
+        {
+            "blood_bar/skin.png": "089AD49162896E18DB4286BFBE74A33C"
+        },
+        {
+            "blood_bar/skin.json": "5B0B1D06B4164089967B2F3C04CD1411"
+        },
+        {
+            "key/skin.png": "27698B596B623F464A90217B7C903020"
+        },
+        {
+            "key/skin.json": "C159016C1BD5408328F02E9EBC52550F"
+        },
+        {
+            "key_effect/skin.png": "A81974006EDAB7C5CF40657B37A6EA56"
+        },
+        {
+            "key_effect/skin.json": "0E9F716797572823035DD32BDAF2EA00"
+        }
+    ],
+    "pack_md5": "88F9CAB6B43740651D69967C3DF2A170",
+    "player_number": 1,
+    "skin_type": 0
+}

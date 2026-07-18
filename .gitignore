@@ -1,0 +1,31 @@
+# Godot generated cache
+.godot/
+*.import
+*.tmp
+
+# Release/build output
+release/
+build/
+.release-staging/
+.release-backup/
+
+# Local song content: keep only the marker directory in source control
+songs/*
+!songs/.gdignore
+assets/e5cm_runtime/songs/*
+!assets/e5cm_runtime/songs/.gdignore
+
+# Local archives and historical QA output
+.codex-qa/
+.codex-qa-user/
+.codex-compare/
+.codex-backup/
+shots/
+*.log
+
+# Python cache
+**/__pycache__/
+*.py[cod]
+
+# Local credentials
+.godot/export_credentials.cfg

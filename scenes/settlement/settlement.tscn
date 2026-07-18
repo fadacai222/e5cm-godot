@@ -1,0 +1,322 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scenes/settlement/settlement.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/ui/player_select/online.png" id="3_online"]
+
+[node name="Settlement" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="SettlementBackground" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 6
+
+[node name="BackgroundDim" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="SettlementPanel" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 115.2
+offset_top = 120.0
+offset_right = 955.2
+offset_bottom = 960.0
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 0
+
+[node name="CoverClip" type="Control" parent="."]
+layout_mode = 0
+offset_left = 282.0
+offset_top = 356.4
+offset_right = 488.4
+offset_bottom = 576.0
+mouse_filter = 2
+clip_contents = true
+
+[node name="Cover" type="TextureRect" parent="CoverClip"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 6
+
+[node name="StarLabel" type="Label" parent="."]
+layout_mode = 0
+offset_left = 183.6
+offset_top = 609.6
+offset_right = 554.4
+offset_bottom = 655.2
+theme_override_colors/font_color = Color(0.95, 0.87, 0.24, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.8)
+theme_override_constants/outline_size = 2
+theme_override_font_sizes/font_size = 26
+text = "★★★★★★★★"
+
+[node name="SongTitle" type="Label" parent="."]
+layout_mode = 0
+offset_left = 181.2
+offset_top = 656.4
+offset_right = 554.4
+offset_bottom = 716.4
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.8)
+theme_override_constants/outline_size = 2
+theme_override_font_sizes/font_size = 24
+text = "歌曲名称"
+clip_text = true
+
+[node name="StageLabel" type="Label" parent="."]
+layout_mode = 0
+offset_left = 155.2
+offset_top = 60.0
+offset_right = 655.2
+offset_bottom = 105.0
+theme_override_colors/font_color = Color(0.9, 0.93, 1, 1)
+theme_override_font_sizes/font_size = 26
+text = "club  第1把"
+
+[node name="Miss" type="Label" parent="."]
+layout_mode = 0
+offset_left = 561.6
+offset_top = 356.4
+offset_right = 816.0
+offset_bottom = 416.4
+theme_override_colors/font_outline_color = Color(0.65098, 0.07451, 0.10588, 1)
+theme_override_constants/outline_size = 1
+theme_override_font_sizes/font_size = 36
+text = "0"
+horizontal_alignment = 2
+
+[node name="Good" type="Label" parent="."]
+layout_mode = 0
+offset_left = 554.4
+offset_top = 417.6
+offset_right = 816.0
+offset_bottom = 482.4
+theme_override_colors/font_outline_color = Color(0.19216, 0.2902, 0.09804, 1)
+theme_override_constants/outline_size = 1
+theme_override_font_sizes/font_size = 36
+text = "0"
+horizontal_alignment = 2
+
+[node name="Cool" type="Label" parent="."]
+layout_mode = 0
+offset_left = 554.4
+offset_top = 483.6
+offset_right = 816.0
+offset_bottom = 548.4
+theme_override_colors/font_outline_color = Color(0.04706, 0.03529, 0.27059, 1)
+theme_override_constants/outline_size = 1
+theme_override_font_sizes/font_size = 36
+text = "0"
+horizontal_alignment = 2
+
+[node name="Perfect" type="Label" parent="."]
+layout_mode = 0
+offset_left = 554.4
+offset_top = 548.4
+offset_right = 816.0
+offset_bottom = 613.2
+theme_override_colors/font_outline_color = Color(0.44314, 0.07451, 0.23922, 1)
+theme_override_constants/outline_size = 1
+theme_override_font_sizes/font_size = 36
+text = "0"
+horizontal_alignment = 2
+
+[node name="Combo" type="Label" parent="."]
+layout_mode = 0
+offset_left = 554.4
+offset_top = 615.6
+offset_right = 816.0
+offset_bottom = 680.4
+theme_override_colors/font_outline_color = Color(0.21961, 0.12941, 0.44314, 1)
+theme_override_constants/outline_size = 1
+theme_override_font_sizes/font_size = 36
+text = "0"
+horizontal_alignment = 2
+
+[node name="Accuracy" type="Label" parent="."]
+layout_mode = 0
+offset_left = 562.8
+offset_top = 688.8
+offset_right = 843.6
+offset_bottom = 748.8
+theme_override_colors/font_outline_color = Color(0.87451, 0.75686, 0.23922, 1)
+theme_override_constants/outline_size = 1
+theme_override_font_sizes/font_size = 36
+text = "00.00%"
+horizontal_alignment = 2
+
+[node name="Score" type="Control" parent="."]
+layout_mode = 0
+offset_left = 552.0
+offset_top = 804.0
+offset_right = 854.4
+offset_bottom = 864.0
+mouse_filter = 2
+clip_contents = true
+
+[node name="Value" type="Label" parent="Score"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -2.5
+offset_bottom = 2.5
+grow_horizontal = 2
+grow_vertical = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_constants/outline_size = 0
+theme_override_font_sizes/font_size = 53
+text = "0000000"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="GradeSprite" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 211.2
+offset_top = 739.2
+offset_right = 402.0
+offset_bottom = 904.8
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="TopStatusBadge" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 160.8
+offset_top = 139.2
+offset_right = 914.4
+offset_bottom = 362.4
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+visible = false
+
+[node name="NewRecordBadge" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 564.0
+offset_top = 58.8
+offset_right = 1123.2
+offset_bottom = 199.2
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+visible = false
+
+[node name="FailImage" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 760.0
+offset_top = 20.0
+offset_right = 1160.0
+offset_bottom = 130.0
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Phase3Prompt" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 376.8
+offset_top = 368.4
+offset_right = 1566.0
+offset_bottom = 591.6
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Phase3Countdown" type="Label" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 810.0
+offset_bottom = 930.0
+grow_horizontal = 2
+text = ""
+horizontal_alignment = 1
+
+[node name="Phase3CountdownDigits" type="Control" parent="."]
+layout_mode = 0
+offset_left = 760.0
+offset_top = 810.0
+offset_right = 1160.0
+offset_bottom = 930.0
+mouse_filter = 2
+visible = false
+
+[node name="Phase3Yes" type="TextureButton" parent="."]
+layout_mode = 0
+offset_left = 840.0
+offset_top = 594.0
+offset_right = 948.0
+offset_bottom = 702.0
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="Phase3No" type="TextureButton" parent="."]
+layout_mode = 0
+offset_left = 972.0
+offset_top = 594.0
+offset_right = 1080.0
+offset_bottom = 702.0
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="BottomCreditCenter" type="CenterContainer" parent="."]
+z_index = 90
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -89.0
+offset_bottom = -34.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="BottomCreditRow" type="HBoxContainer" parent="BottomCreditCenter"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="CreditOnlineIcon" type="TextureRect" parent="BottomCreditCenter/BottomCreditRow"]
+custom_minimum_size = Vector2(52.48, 45.1)
+layout_mode = 2
+mouse_filter = 2
+texture = ExtResource("3_online")
+expand_mode = 1
+stretch_mode = 4
+
+[node name="CreditLabel" type="Label" parent="BottomCreditCenter/BottomCreditRow"]
+custom_minimum_size = Vector2(0, 45.1)
+layout_mode = 2
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.85)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 23
+text = "CREDIT：0/6"
+vertical_alignment = 1

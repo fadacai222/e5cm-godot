@@ -1,0 +1,52 @@
+{"frames": [
+
+{
+	"filename": "text_pf5_combo.png",
+	"frame": {"x":0,"y":110,"w":450,"h":110},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":450,"h":110},
+	"sourceSize": {"w":450,"h":110}
+},
+{
+	"filename": "text_pf5_cool.png",
+	"frame": {"x":312,"y":0,"w":332,"h":110},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":332,"h":110},
+	"sourceSize": {"w":332,"h":110}
+},
+{
+	"filename": "text_pf5_good.png",
+	"frame": {"x":644,"y":0,"w":356,"h":110},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":356,"h":110},
+	"sourceSize": {"w":356,"h":110}
+},
+{
+	"filename": "text_pf5_miss.png",
+	"frame": {"x":0,"y":0,"w":312,"h":110},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":312,"h":110},
+	"sourceSize": {"w":312,"h":110}
+},
+{
+	"filename": "text_pf5_perfect.png",
+	"frame": {"x":450,"y":110,"w":568,"h":110},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":568,"h":110},
+	"sourceSize": {"w":568,"h":110}
+}],
+"meta": {
+	"app": "https://www.codeandweb.com/texturepacker",
+	"version": "1.0",
+	"image": "skin.png",
+	"format": "RGBA8888",
+	"size": {"w":1018,"h":220},
+	"scale": "1",
+	"smartupdate": "$TexturePacker:SmartUpdate:9112e3671ed7a1ed8ccf9d477422ab16:eaa1885aa035eafba0705a461f0f7362:7a403c0f1de4950c4b2f4e76483f7a97$"
+}
+}

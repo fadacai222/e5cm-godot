@@ -1,0 +1,42 @@
+{
+    "file_md5_list": [
+        {
+            "arrow/skin.png": "FD666F23573D8CDE931087C7484E00DD"
+        },
+        {
+            "arrow/skin.json": "15F2F35371D8B456656284A1CCB62834"
+        },
+        {
+            "blood_bar/skin.png": "089AD49162896E18DB4286BFBE74A33C"
+        },
+        {
+            "blood_bar/skin.json": "5B0B1D06B4164089967B2F3C04CD1411"
+        },
+        {
+            "judge/skin.png": "94AFDE03E78B0EE3F8B075DCDDEF5F0B"
+        },
+        {
+            "judge/skin.json": "6382B7566B7A0AB3761431C66DCFCBA8"
+        },
+        {
+            "key/skin.png": "8E9D8D4CB48E4AAD6B1A2D5530F6734F"
+        },
+        {
+            "key/skin.json": "C159016C1BD5408328F02E9EBC52550F"
+        },
+        {
+            "key_effect/skin.png": "8B96F5854EB0A711E0B3DD9ABE319704"
+        },
+        {
+            "key_effect/skin.json": "9CBABA8D52A5EF859EA1896DA24026A2"
+        },
+        {
+            "number/skin.png": "4A5930CC8848350E4BCB0677AFDFA83A"
+        },
+        {
+            "number/skin.json": "C27F88C427C7049839B2D1623090A2D3"
+        }
+    ],
+    "name": "SingleArrowTheme",
+    "type": 0
+}

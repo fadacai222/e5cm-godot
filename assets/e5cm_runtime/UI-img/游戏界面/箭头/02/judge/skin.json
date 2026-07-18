@@ -1,0 +1,52 @@
+{"frames": [
+
+{
+	"filename": "text_pf2_combo.png",
+	"frame": {"x":372,"y":110,"w":490,"h":110},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":490,"h":110},
+	"sourceSize": {"w":490,"h":110}
+},
+{
+	"filename": "text_pf2_good.png",
+	"frame": {"x":644,"y":0,"w":354,"h":110},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":354,"h":110},
+	"sourceSize": {"w":354,"h":110}
+},
+{
+	"filename": "text_pf2_cool.png",
+	"frame": {"x":0,"y":0,"w":322,"h":110},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":322,"h":110},
+	"sourceSize": {"w":322,"h":110}
+},
+{
+	"filename": "text_pf2_miss.png",
+	"frame": {"x":322,"y":0,"w":322,"h":110},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":322,"h":110},
+	"sourceSize": {"w":322,"h":110}
+},
+{
+	"filename": "text_pf2_perfect.png",
+	"frame": {"x":0,"y":110,"w":372,"h":134},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":372,"h":134},
+	"sourceSize": {"w":372,"h":134}
+}],
+"meta": {
+	"app": "https://www.codeandweb.com/texturepacker",
+	"version": "1.0",
+	"image": "skin.png",
+	"format": "RGBA8888",
+	"size": {"w":998,"h":244},
+	"scale": "1",
+	"smartupdate": "$TexturePacker:SmartUpdate:7813ca8042d5b460dd06185504eae850:b0d29b741111de42035713952054b983:7a403c0f1de4950c4b2f4e76483f7a97$"
+}
+}

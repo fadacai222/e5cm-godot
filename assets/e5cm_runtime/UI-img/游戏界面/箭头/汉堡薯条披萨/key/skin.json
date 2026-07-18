@@ -1,0 +1,204 @@
+{
+    "frames": [
+        {
+            "filename": "key_bb.png",
+            "frame": {
+                "h": 122,
+                "w": 122,
+                "x": 367,
+                "y": 122
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 122,
+                "w": 122
+            },
+            "spriteSourceSize": {
+                "h": 122,
+                "w": 122,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "key_bl.png",
+            "frame": {
+                "h": 122,
+                "w": 123,
+                "x": 0,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 122,
+                "w": 123
+            },
+            "spriteSourceSize": {
+                "h": 122,
+                "w": 123,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "key_br.png",
+            "frame": {
+                "h": 122,
+                "w": 123,
+                "x": 123,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 122,
+                "w": 123
+            },
+            "spriteSourceSize": {
+                "h": 122,
+                "w": 123,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "key_cc.png",
+            "frame": {
+                "h": 122,
+                "w": 123,
+                "x": 246,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 122,
+                "w": 123
+            },
+            "spriteSourceSize": {
+                "h": 122,
+                "w": 123,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "key_ll.png",
+            "frame": {
+                "h": 122,
+                "w": 122,
+                "x": 245,
+                "y": 122
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 122,
+                "w": 122
+            },
+            "spriteSourceSize": {
+                "h": 122,
+                "w": 122,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "key_rr.png",
+            "frame": {
+                "h": 122,
+                "w": 122,
+                "x": 123,
+                "y": 122
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 122,
+                "w": 122
+            },
+            "spriteSourceSize": {
+                "h": 122,
+                "w": 122,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "key_tl.png",
+            "frame": {
+                "h": 122,
+                "w": 123,
+                "x": 369,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 122,
+                "w": 123
+            },
+            "spriteSourceSize": {
+                "h": 122,
+                "w": 123,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "key_tr.png",
+            "frame": {
+                "h": 122,
+                "w": 123,
+                "x": 0,
+                "y": 122
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 122,
+                "w": 123
+            },
+            "spriteSourceSize": {
+                "h": 122,
+                "w": 123,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "key_tt.png",
+            "frame": {
+                "h": 122,
+                "w": 122,
+                "x": 0,
+                "y": 244
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 122,
+                "w": 122
+            },
+            "spriteSourceSize": {
+                "h": 122,
+                "w": 122,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        }
+    ],
+    "meta": {
+        "app": "askin",
+        "format": "RGBA8888",
+        "image": "skin.png",
+        "scale": 1,
+        "size": {
+            "h": 366,
+            "w": 492
+        },
+        "version": "1.0"
+    }
+}

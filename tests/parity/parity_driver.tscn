@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource path="res://tests/parity/parity_driver.gd" type="Script" id="1_driver"]
+
+[node name="ParityHarness" type="Node"]
+
+[node name="ParityDriver" type="Node" parent="."]
+script = ExtResource("1_driver")

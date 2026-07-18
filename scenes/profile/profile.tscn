@@ -1,0 +1,384 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scenes/profile/profile.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/ui/top_bar/background.png" id="3_top_bg"]
+[ext_resource type="Texture2D" path="res://assets/ui/top_bar/profile.png" id="4_top_title"]
+[ext_resource type="Texture2D" path="res://assets/ui/player_select/online.png" id="5_online"]
+
+[node name="Profile" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="SharedVideoDim" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="ProfileTopPanel" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 208.125
+offset_top = 175.3125
+offset_right = 1603.125
+offset_bottom = 461.25
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 0
+
+[node name="ProfileBottomPanel" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 200.625
+offset_top = 509.0625
+offset_right = 1605.0
+offset_bottom = 865.3125
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 0
+
+[node name="ProfileAvatar" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 263.4375
+offset_top = 188.4375
+offset_right = 405.9375
+offset_bottom = 330.9375
+mouse_filter = 2
+clip_contents = true
+expand_mode = 1
+stretch_mode = 6
+
+[node name="ProfileNickname" type="Label" parent="."]
+layout_mode = 0
+offset_left = 262.5
+offset_top = 339.375
+offset_right = 402.1875
+offset_bottom = 376.875
+theme_override_colors/font_color = Color(1, 0.92, 0.63, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 23
+text = "玩家"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="AvatarEditButton" type="Button" parent="."]
+layout_mode = 0
+offset_left = 263.4375
+offset_top = 188.4375
+offset_right = 405.9375
+offset_bottom = 330.9375
+mouse_default_cursor_shape = 2
+focus_mode = 0
+mouse_filter = 0
+tooltip_text = "点击修改头像"
+flat = true
+
+[node name="NicknameEditButton" type="Button" parent="."]
+layout_mode = 0
+offset_left = 234.375
+offset_top = 331.875
+offset_right = 431.25
+offset_bottom = 378.75
+mouse_default_cursor_shape = 2
+focus_mode = 0
+tooltip_text = "点击修改昵称"
+flat = true
+
+[node name="RankBadge" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 228.75
+offset_top = 363.75
+offset_right = 423.75
+offset_bottom = 446.25
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Stat0" type="Label" parent="."]
+layout_mode = 0
+offset_left = 449.0625
+offset_top = 202.5
+offset_right = 1168.125
+offset_bottom = 238.125
+theme_override_colors/font_color = Color(0.88, 0.91, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 20
+vertical_alignment = 1
+
+[node name="Stat1" type="Label" parent="."]
+layout_mode = 0
+offset_left = 449.0625
+offset_top = 240.9375
+offset_right = 1168.125
+offset_bottom = 276.5625
+theme_override_colors/font_color = Color(0.88, 0.91, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 20
+vertical_alignment = 1
+
+[node name="Stat2" type="Label" parent="."]
+layout_mode = 0
+offset_left = 449.0625
+offset_top = 279.375
+offset_right = 1168.125
+offset_bottom = 315.0
+theme_override_colors/font_color = Color(0.88, 0.91, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 20
+vertical_alignment = 1
+
+[node name="Stat3" type="Label" parent="."]
+layout_mode = 0
+offset_left = 449.0625
+offset_top = 317.8125
+offset_right = 1168.125
+offset_bottom = 353.4375
+theme_override_colors/font_color = Color(0.88, 0.91, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 20
+vertical_alignment = 1
+
+[node name="WelcomeText" type="Label" parent="."]
+layout_mode = 0
+offset_left = 1239.375
+offset_top = 206.25
+offset_right = 1578.75
+offset_bottom = 339.375
+theme_override_colors/font_color = Color(0.82, 0.86, 0.96, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 15
+text = "欢迎来到 E5CM-CG\n本游戏软件为交流、学习、测试使用，\n如有侵权，请率先联系我们。"
+vertical_alignment = 1
+
+[node name="FancyLevelLabel" type="Label" parent="."]
+layout_mode = 0
+offset_left = 454.6875
+offset_top = 381.5625
+offset_right = 623.4375
+offset_bottom = 427.5
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 22
+text = "花式  Lv.1"
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="FancyExpFill" type="TextureRect" parent="." groups=["profile_exp_bar"]]
+layout_mode = 0
+offset_left = 632.8125
+offset_top = 387.1875
+offset_right = 1602.1875
+offset_bottom = 421.875
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 0
+
+[node name="FancyExpFrame" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 632.8125
+offset_top = 387.1875
+offset_right = 1602.1875
+offset_bottom = 421.875
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 0
+
+[node name="FancyExpValue" type="Label" parent="."]
+layout_mode = 0
+offset_left = 1609.6875
+offset_top = 385.3125
+offset_right = 1707.1875
+offset_bottom = 423.75
+theme_override_colors/font_color = Color(1, 0.84, 0.26, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 14
+text = "0 / 100"
+vertical_alignment = 1
+
+[node name="SpeedLevelLabel" type="Label" parent="."]
+layout_mode = 0
+offset_left = 453.75
+offset_top = 428.4375
+offset_right = 622.5
+offset_bottom = 474.375
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 22
+text = "竞速  Lv.1"
+horizontal_alignment = 2
+vertical_alignment = 1
+
+[node name="SpeedExpFill" type="TextureRect" parent="." groups=["profile_exp_bar"]]
+layout_mode = 0
+offset_left = 631.875
+offset_top = 434.0625
+offset_right = 1601.25
+offset_bottom = 468.75
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 0
+
+[node name="SpeedExpFrame" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 631.875
+offset_top = 434.0625
+offset_right = 1601.25
+offset_bottom = 468.75
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 0
+
+[node name="SpeedExpValue" type="Label" parent="."]
+layout_mode = 0
+offset_left = 1608.75
+offset_top = 432.1875
+offset_right = 1706.25
+offset_bottom = 470.625
+theme_override_colors/font_color = Color(1, 0.56, 0.08, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 14
+text = "0 / 100"
+vertical_alignment = 1
+
+[node name="SoftwareBadge" type="TextureRect" parent="."]
+layout_mode = 0
+offset_left = 249.375
+offset_top = 474.375
+offset_right = 379.6875
+offset_bottom = 555.0
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 0
+
+[node name="SoftwareInfo" type="RichTextLabel" parent="."]
+layout_mode = 0
+offset_left = 273.75
+offset_top = 580.3125
+offset_right = 1570.3125
+offset_bottom = 837.1875
+mouse_filter = 2
+bbcode_enabled = true
+fit_content = false
+scroll_active = false
+
+[node name="Disclaimer" type="Label" parent="."]
+layout_mode = 0
+offset_left = 268.125
+offset_top = 835.3125
+offset_right = 1524.375
+offset_bottom = 876.5625
+theme_override_colors/font_color = Color(1, 0.82, 0.32, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.82)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 15
+text = "本项目纯爱发电，没有任何盈利性质，如您发现有人倒卖本软件，请及时联系我们。"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="LeaveButton" type="TextureButton" parent="."]
+layout_mode = 0
+offset_left = 1641.5625
+offset_top = 751.875
+offset_right = 1753.125
+offset_bottom = 879.375
+focus_mode = 0
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="EnterHint" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_top = 942.0
+offset_bottom = 978.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(1, 1, 1, 0.62)
+theme_override_font_sizes/font_size = 20
+text = "踏板 5 / 回车 进入游戏"
+horizontal_alignment = 1
+
+[node name="TopBar" type="Control" parent="."]
+z_index = 80
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 150.0
+grow_horizontal = 2
+mouse_filter = 2
+
+[node name="TopBarBackground" type="TextureRect" parent="TopBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = ExtResource("3_top_bg")
+expand_mode = 1
+stretch_mode = 0
+
+[node name="TopBarTitle" type="TextureRect" parent="TopBar"]
+layout_mode = 0
+offset_left = 826.6667
+offset_top = 22.5
+offset_right = 1093.3334
+offset_bottom = 97.5
+mouse_filter = 2
+texture = ExtResource("4_top_title")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="BottomCreditCenter" type="CenterContainer" parent="."]
+z_index = 90
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -89.0
+offset_bottom = -34.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="BottomCreditRow" type="HBoxContainer" parent="BottomCreditCenter"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="CreditOnlineIcon" type="TextureRect" parent="BottomCreditCenter/BottomCreditRow"]
+custom_minimum_size = Vector2(52.48, 45.1)
+layout_mode = 2
+mouse_filter = 2
+texture = ExtResource("5_online")
+expand_mode = 1
+stretch_mode = 4
+
+[node name="CreditLabel" type="Label" parent="BottomCreditCenter/BottomCreditRow"]
+custom_minimum_size = Vector2(0, 45.1)
+layout_mode = 2
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.85)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 23
+text = "CREDIT：0/6"
+vertical_alignment = 1

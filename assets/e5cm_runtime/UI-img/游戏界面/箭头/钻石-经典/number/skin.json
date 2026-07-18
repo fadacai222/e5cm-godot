@@ -1,0 +1,246 @@
+{
+    "frames": [
+        {
+            "filename": "judge_number_0.png",
+            "frame": {
+                "h": 80,
+                "w": 58,
+                "x": 118,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 58
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 58,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_number_1.png",
+            "frame": {
+                "h": 80,
+                "w": 16,
+                "x": 466,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 16
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 16,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_number_2.png",
+            "frame": {
+                "h": 80,
+                "w": 60,
+                "x": 0,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 60
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 60,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_number_3.png",
+            "frame": {
+                "h": 80,
+                "w": 58,
+                "x": 176,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 58
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 58,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_number_4.png",
+            "frame": {
+                "h": 80,
+                "w": 58,
+                "x": 234,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 58
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 58,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_number_5.png",
+            "frame": {
+                "h": 80,
+                "w": 58,
+                "x": 292,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 58
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 58,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_number_6.png",
+            "frame": {
+                "h": 80,
+                "w": 58,
+                "x": 350,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 58
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 58,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_number_7.png",
+            "frame": {
+                "h": 80,
+                "w": 50,
+                "x": 56,
+                "y": 80
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 50
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 50,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_number_8.png",
+            "frame": {
+                "h": 80,
+                "w": 56,
+                "x": 0,
+                "y": 80
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 56
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 56,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_number_9.png",
+            "frame": {
+                "h": 80,
+                "w": 58,
+                "x": 60,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 58
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 58,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_number_x.png",
+            "frame": {
+                "h": 80,
+                "w": 58,
+                "x": 408,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 80,
+                "w": 58
+            },
+            "spriteSourceSize": {
+                "h": 80,
+                "w": 58,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        }
+    ],
+    "meta": {
+        "app": "askin",
+        "format": "RGBA8888",
+        "image": "skin.png",
+        "scale": 1,
+        "size": {
+            "h": 160,
+            "w": 482
+        },
+        "version": "1.0"
+    }
+}

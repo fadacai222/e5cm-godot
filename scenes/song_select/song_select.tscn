@@ -1,0 +1,268 @@
+[gd_scene load_steps=6 format=3]
+
+[ext_resource type="Script" path="res://scenes/song_select/song_select.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://assets/ui/top_bar/background.png" id="3_top_bg"]
+[ext_resource type="Texture2D" path="res://assets/ui/top_bar/song_select.png" id="4_top_title"]
+[ext_resource type="Texture2D" path="res://assets/ui/player_select/online.png" id="5_online"]
+[ext_resource type="Script" path="res://scenes/song_select/song_ui_coordinator.gd" id="6_coordinator"]
+
+[node name="SongSelect" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="SongSelectBackground" type="TextureRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 6
+
+[node name="BackgroundDim" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 0, 0, 0.235294)
+
+[node name="SongGrid" type="ReferenceRect" parent="."]
+visible = false
+layout_mode = 0
+offset_top = 140.0
+offset_right = 1920.0
+offset_bottom = 889.0
+mouse_filter = 2
+editor_only = true
+border_color = Color(0.18, 0.8, 1, 0.75)
+border_width = 2.0
+
+[node name="FilterButton" type="TextureButton" parent="."]
+layout_mode = 0
+offset_left = 94.0
+offset_top = 908.0
+offset_right = 216.0
+offset_bottom = 1061.0
+focus_mode = 0
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="FavoriteButton" type="TextureButton" parent="."]
+layout_mode = 0
+offset_left = 240.0
+offset_top = 908.0
+offset_right = 362.0
+offset_bottom = 1061.0
+focus_mode = 0
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="AllButton" type="TextureButton" parent="."]
+layout_mode = 0
+offset_left = 386.0
+offset_top = 908.0
+offset_right = 508.0
+offset_bottom = 1061.0
+focus_mode = 0
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="ReselectButton" type="TextureButton" parent="."]
+layout_mode = 0
+offset_left = 532.0
+offset_top = 908.0
+offset_right = 654.0
+offset_bottom = 1061.0
+focus_mode = 0
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="SearchButton" type="TextureButton" parent="."]
+layout_mode = 0
+offset_left = 678.0
+offset_top = 908.0
+offset_right = 800.0
+offset_bottom = 1061.0
+focus_mode = 0
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="JoinPlayerButton" type="TextureButton" parent="."]
+layout_mode = 0
+offset_left = 1558.0
+offset_top = 908.0
+offset_right = 1680.0
+offset_bottom = 1061.0
+focus_mode = 0
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="SettingsButton" type="TextureButton" parent="."]
+layout_mode = 0
+offset_left = 1704.0
+offset_top = 908.0
+offset_right = 1826.0
+offset_bottom = 1061.0
+focus_mode = 0
+ignore_texture_size = true
+stretch_mode = 4
+
+[node name="FilterLabel" type="Label" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 560.0
+offset_top = 1012.0
+offset_right = 1320.0
+offset_bottom = 1048.0
+theme_override_colors/font_color = Color(1, 0.87, 0.5, 0.95)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.8)
+theme_override_constants/outline_size = 4
+theme_override_font_sizes/font_size = 24
+clip_text = true
+
+[node name="PageLabel" type="Label" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 1620.0
+offset_top = 1008.0
+offset_right = 1770.0
+offset_bottom = 1050.0
+theme_override_colors/font_color = Color(1, 1, 1, 0.85)
+theme_override_font_sizes/font_size = 30
+text = "1 / 1"
+
+[node name="RoundLabel" type="Label" parent="."]
+visible = false
+layout_mode = 0
+offset_left = 1780.0
+offset_top = 1008.0
+offset_right = 1910.0
+offset_bottom = 1050.0
+theme_override_colors/font_color = Color(1, 0.9, 0.5, 1)
+theme_override_font_sizes/font_size = 28
+text = "第1把"
+
+[node name="PreviousPage" type="TextureButton" parent="."]
+z_index = 15
+layout_mode = 0
+offset_left = 30.0
+offset_top = 424.0
+offset_right = 118.0
+offset_bottom = 600.0
+modulate = Color(1, 1, 1, 0.690196)
+ignore_texture_size = true
+stretch_mode = 5
+flip_h = true
+
+[node name="NextPage" type="TextureButton" parent="."]
+z_index = 15
+layout_mode = 0
+offset_left = 1802.0
+offset_top = 424.0
+offset_right = 1890.0
+offset_bottom = 600.0
+modulate = Color(1, 1, 1, 0.690196)
+ignore_texture_size = true
+stretch_mode = 5
+
+[node name="UiCoordinator" type="Node" parent="."]
+script = ExtResource("6_coordinator")
+
+[node name="TopBar" type="Control" parent="."]
+z_index = 80
+layout_mode = 1
+anchors_preset = 10
+anchor_right = 1.0
+offset_bottom = 150.0
+grow_horizontal = 2
+mouse_filter = 2
+
+[node name="TopBarBackground" type="TextureRect" parent="TopBar"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+texture = ExtResource("3_top_bg")
+expand_mode = 1
+stretch_mode = 0
+
+[node name="TopBarTitle" type="TextureRect" parent="TopBar"]
+layout_mode = 0
+offset_left = 827.1296
+offset_top = 22.5
+offset_right = 1092.8704
+offset_bottom = 97.5
+mouse_filter = 2
+texture = ExtResource("4_top_title")
+expand_mode = 1
+stretch_mode = 5
+
+[node name="ModeBadge" type="Control" parent="TopBar"]
+layout_mode = 0
+offset_left = 192.0
+offset_right = 342.0
+offset_bottom = 74.0
+mouse_filter = 2
+
+[node name="SubmodeBadge" type="Control" parent="TopBar"]
+layout_mode = 0
+offset_left = 355.0
+offset_right = 505.0
+offset_bottom = 74.0
+mouse_filter = 2
+
+[node name="BottomCreditCenter" type="CenterContainer" parent="."]
+z_index = 90
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_top = -89.0
+offset_bottom = -34.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="BottomCreditRow" type="HBoxContainer" parent="BottomCreditCenter"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="CreditOnlineIcon" type="TextureRect" parent="BottomCreditCenter/BottomCreditRow"]
+custom_minimum_size = Vector2(52.48, 45.1)
+layout_mode = 2
+mouse_filter = 2
+texture = ExtResource("5_online")
+expand_mode = 1
+stretch_mode = 4
+
+[node name="CreditLabel" type="Label" parent="BottomCreditCenter/BottomCreditRow"]
+custom_minimum_size = Vector2(0, 45.1)
+layout_mode = 2
+mouse_filter = 2
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.85)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 23
+text = "CREDIT：0/6"
+vertical_alignment = 1
+
+[node name="PreviewPlayer" type="AudioStreamPlayer" parent="."]
+volume_db = -6.0206
+
+[node name="PreviewTimer" type="Timer" parent="."]
+one_shot = true

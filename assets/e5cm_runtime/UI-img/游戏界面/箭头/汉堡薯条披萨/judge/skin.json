@@ -1,0 +1,120 @@
+{
+    "frames": [
+        {
+            "filename": "judge_combo.png",
+            "frame": {
+                "h": 110,
+                "w": 458,
+                "x": 0,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 110,
+                "w": 458
+            },
+            "spriteSourceSize": {
+                "h": 110,
+                "w": 458,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_cool.png",
+            "frame": {
+                "h": 110,
+                "w": 218,
+                "x": 798,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 110,
+                "w": 218
+            },
+            "spriteSourceSize": {
+                "h": 110,
+                "w": 218,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_good.png",
+            "frame": {
+                "h": 110,
+                "w": 230,
+                "x": 0,
+                "y": 110
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 110,
+                "w": 230
+            },
+            "spriteSourceSize": {
+                "h": 110,
+                "w": 230,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_miss.png",
+            "frame": {
+                "h": 110,
+                "w": 191,
+                "x": 230,
+                "y": 110
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 110,
+                "w": 191
+            },
+            "spriteSourceSize": {
+                "h": 110,
+                "w": 191,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        },
+        {
+            "filename": "judge_perfect.png",
+            "frame": {
+                "h": 110,
+                "w": 340,
+                "x": 458,
+                "y": 0
+            },
+            "rotated": false,
+            "sourceSize": {
+                "h": 110,
+                "w": 340
+            },
+            "spriteSourceSize": {
+                "h": 110,
+                "w": 340,
+                "x": 0,
+                "y": 0
+            },
+            "trimmed": false
+        }
+    ],
+    "meta": {
+        "app": "askin",
+        "format": "RGBA8888",
+        "image": "skin.png",
+        "scale": 1,
+        "size": {
+            "h": 220,
+            "w": 1016
+        },
+        "version": "1.0"
+    }
+}

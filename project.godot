@@ -1,0 +1,45 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="E5CM"
+config/version="0.9.0"
+run/main_scene="res://scenes/boot/boot.tscn"
+config/features=PackedStringArray("4.6")
+run/max_fps=240
+config/icon="res://assets/branding/e5cm_icon.png"
+
+[autoload]
+
+AssetLoader="*res://autoload/asset_loader.gd"
+SharedVideoBackground="*res://autoload/shared_video_background.gd"
+SettingsStore="*res://autoload/settings_store.gd"
+GameState="*res://autoload/game_state.gd"
+ProfileStore="*res://autoload/profile_store.gd"
+SongLibrary="*res://autoload/song_library.gd"
+AudioDirector="*res://autoload/audio_director.gd"
+SceneRouter="*res://autoload/scene_router.gd"
+ClickFx="*res://autoload/click_fx.gd"
+StatusHud="*res://autoload/status_hud.gd"
+PublicSystemMenu="*res://autoload/public_system_menu.gd"
+
+[display]
+
+window/size/viewport_width=1920
+window/size/viewport_height=1080
+window/size/window_width_override=1920
+window/size/window_height_override=1080
+window/stretch/mode="canvas_items"
+window/vsync/vsync_mode=0
+
+[gui]
+
+theme/custom_font="res://assets/fonts/fzhei.ttf"

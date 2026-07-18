@@ -1,0 +1,52 @@
+{"frames": [
+
+{
+	"filename": "judge_combo.png",
+	"frame": {"x":0,"y":124,"w":414,"h":122},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":414,"h":122},
+	"sourceSize": {"w":414,"h":122}
+},
+{
+	"filename": "judge_cool.png",
+	"frame": {"x":234,"y":0,"w":302,"h":124},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":302,"h":124},
+	"sourceSize": {"w":302,"h":124}
+},
+{
+	"filename": "judge_good.png",
+	"frame": {"x":536,"y":0,"w":353,"h":124},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":353,"h":124},
+	"sourceSize": {"w":353,"h":124}
+},
+{
+	"filename": "judge_miss.png",
+	"frame": {"x":0,"y":0,"w":234,"h":122},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":234,"h":122},
+	"sourceSize": {"w":234,"h":122}
+},
+{
+	"filename": "judge_perfect.png",
+	"frame": {"x":414,"y":124,"w":494,"h":124},
+	"rotated": false,
+	"trimmed": false,
+	"spriteSourceSize": {"x":0,"y":0,"w":494,"h":124},
+	"sourceSize": {"w":494,"h":124}
+}],
+"meta": {
+	"app": "https://www.codeandweb.com/texturepacker",
+	"version": "1.0",
+	"image": "skin.png",
+	"format": "RGBA8888",
+	"size": {"w":908,"h":248},
+	"scale": "1",
+	"smartupdate": "$TexturePacker:SmartUpdate:ca4c82488ea3677f0c5fc030a40a30b8:1df3c8c026b58f92c0749ea4d66f7495:7a403c0f1de4950c4b2f4e76483f7a97$"
+}
+}
