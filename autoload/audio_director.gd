@@ -153,33 +153,125 @@ func get_test_events() -> Array:
 	return _test_events.duplicate(true)
 
 
-var _stream_cache := {}   # path -> AudioStream（音效反复加载缓存）
+var _stream_cache := {}   # path -> AudioStream（短音效/BGM 反复加载缓存）
+var _song_load_jobs := {} # path -> 共享中的后台读取任务；完成后立即移除，不常驻歌曲数据
+var _async_song_read_count := 0
 
 
-## 支持 res:// 内资源与外部绝对路径（曲库 mp3）
-func _load_stream(path: String) -> AudioStream:
+## 曲库歌曲专用异步加载。外部 songs 目录通常带 .gdignore，不能依赖导入缓存；
+## 文件读取放到工作线程，AudioStream 对象仍在主线程创建，避免快速切歌时卡住渲染。
+## 曲库流不写入全局缓存：一首歌可能几十 MB，常驻缓存会随着浏览歌曲持续膨胀。
+func load_song_stream_async(path: String) -> AudioStream:
+	if path.is_empty():
+		return null
+	var imported := _load_imported_stream(path)
+	if imported != null:
+		return imported
+	if not FileAccess.file_exists(path):
+		return null
+
+	# 预览尚未完成时立刻开始游戏，或两个界面同时请求同一路径，都等待同一任务。
+	# Dictionary 是引用容器：拥有者更新 done/stream 后，所有等待者会同时看到结果。
+	if _song_load_jobs.has(path):
+		var shared_job: Dictionary = _song_load_jobs[path]
+		while not bool(shared_job.get("done", false)):
+			await get_tree().process_frame
+		return shared_job.get("stream") as AudioStream
+
+	var job := {"done": false, "stream": null}
+	_song_load_jobs[path] = job
+	_async_song_read_count += 1
+	var reader := Thread.new()
+	var start_error := reader.start(_read_audio_bytes.bind(path))
+	if start_error != OK:
+		push_warning("AudioDirector: 音频后台线程启动失败，回退同步读取：%s" % path)
+		var fallback := _load_external_stream_sync(path)
+		_finish_song_load_job(path, job, fallback)
+		return fallback
+	while reader.is_alive():
+		await get_tree().process_frame
+	var result = reader.wait_to_finish()
+	var stream: AudioStream = null
+	if result is Dictionary:
+		var read_result := result as Dictionary
+		var data: PackedByteArray = read_result.get("data", PackedByteArray())
+		if not data.is_empty():
+			stream = _decode_audio_bytes(path, data)
+	_finish_song_load_job(path, job, stream)
+	return stream
+
+
+func _finish_song_load_job(path: String, job: Dictionary, stream: AudioStream) -> void:
+	job["stream"] = stream
+	job["done"] = true
+	# 等待者已经持有 job 引用；从索引移除后，新一轮请求可以重新加载且不会常驻内存。
+	if _song_load_jobs.get(path) == job:
+		_song_load_jobs.erase(path)
+
+
+func async_song_read_count_for_test() -> int:
+	return _async_song_read_count
+
+
+func active_song_load_job_count_for_test() -> int:
+	return _song_load_jobs.size()
+
+
+func reset_async_song_read_count_for_test() -> void:
+	_async_song_read_count = 0
+
+
+func _read_audio_bytes(path: String) -> Dictionary:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return {"error": FileAccess.get_open_error(), "data": PackedByteArray()}
+	return {"error": OK, "data": file.get_buffer(file.get_length())}
+
+
+func _decode_audio_bytes(path: String, data: PackedByteArray) -> AudioStream:
+	var lower := path.to_lower()
+	if lower.ends_with(".mp3"):
+		var mp3 := AudioStreamMP3.new()
+		mp3.data = data
+		return mp3
+	if lower.ends_with(".ogg"):
+		return AudioStreamOggVorbis.load_from_buffer(data)
+	if lower.ends_with(".wav"):
+		return AudioStreamWAV.load_from_buffer(data)
+	return null
+
+
+func _load_imported_stream(path: String) -> AudioStream:
 	var song_path := AssetLoader != null and AssetLoader.has_method("is_song_path") \
 		and bool(AssetLoader.call("is_song_path", path))
 	if not song_path and path.begins_with("res://") and ResourceLoader.exists(path):
-		var imported := load(path) as AudioStream
-		if imported != null:
-			return imported
-	if _stream_cache.has(path):
-		return _stream_cache[path]
+		return load(path) as AudioStream
+	return null
+
+
+func _load_external_stream_sync(path: String) -> AudioStream:
 	if not FileAccess.file_exists(path):
 		return null
 	var lower := path.to_lower()
-	var stream: AudioStream = null
-	if lower.ends_with(".mp3"):
-		var f := FileAccess.open(path, FileAccess.READ)
-		var mp3 := AudioStreamMP3.new()
-		mp3.data = f.get_buffer(f.get_length())
-		stream = mp3
-	elif lower.ends_with(".ogg"):
-		stream = AudioStreamOggVorbis.load_from_file(path)
-	elif lower.ends_with(".wav"):
+	if lower.ends_with(".ogg"):
+		return AudioStreamOggVorbis.load_from_file(path)
+	if lower.ends_with(".wav"):
 		# 必须走 WAV 解析器：直接把整个文件塞进 .data 会把 RIFF 文件头当 PCM 播成雪花噪声
-		stream = AudioStreamWAV.load_from_file(path)
+		return AudioStreamWAV.load_from_file(path)
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return null
+	return _decode_audio_bytes(path, file.get_buffer(file.get_length()))
+
+
+## 支持 res:// 内资源与外部绝对路径（短音效/BGM）。曲库歌曲请走 load_song_stream_async。
+func _load_stream(path: String) -> AudioStream:
+	var imported := _load_imported_stream(path)
+	if imported != null:
+		return imported
+	if _stream_cache.has(path):
+		return _stream_cache[path]
+	var stream := _load_external_stream_sync(path)
 	if stream != null:
 		_stream_cache[path] = stream
 	return stream

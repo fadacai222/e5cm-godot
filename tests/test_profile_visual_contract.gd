@@ -156,11 +156,45 @@ func _initialize() -> void:
 				"%s 经验条 %.0f%% 填充不越界" % [prefix, ratio * 100.0],
 				"fill=%s frame=%s" % [fill.get_rect(), frame.get_rect()])
 		_check(fill.texture is AtlasTexture, "%s 经验条通过纹理区域裁切而非拉伸溢出" % prefix)
+	var diy_bar := profile.get_node_or_null("DiyExperienceProgress") as ProgressBar
+	var diy_overall_ratio := ExpSystem.overall_progress_ratio({"等级": 3, "经验": 4.0})
+	_check(diy_bar != null \
+		and diy_bar.get_rect().position.distance_to(Vector2(593.4375, 456.5625)) < 0.6 \
+		and diy_bar.get_rect().size.distance_to(Vector2(908.4375, 32.8125)) < 0.6 \
+		and absf(diy_bar.value - diy_overall_ratio) < 0.001,
+		"DIY 第三经验条使用同宽矩形并显示等级总进度",
+		str(diy_bar.get_rect()) if diy_bar else "missing")
 	_check((profile.get_node("FancyLevelLabel") as Label).text == "花式经验值：" \
 		and (profile.get_node("FancyExpValue") as Label).text == "Lv. 8" \
 		and (profile.get_node("SpeedLevelLabel") as Label).text == "竞速经验值：" \
-		and (profile.get_node("SpeedExpValue") as Label).text == "Lv. 12",
-		"经验条标签与等级数字使用原版文案")
+		and (profile.get_node("SpeedExpValue") as Label).text == "Lv. 12" \
+		and (profile.get_node("DiyLevelLabel") as Label).text == "DIY经验值：" \
+		and (profile.get_node("DiyExpValue") as Label).text == "Lv. 3",
+		"三模式经验条标签与等级数字完整显示")
+
+	var profile_store = root.get_node("ProfileStore")
+	profile_store.set_mode_progress_preview("花式", {
+		"等级": 9, "经验": 4.0, "累计歌曲": 18, "累计首数": 6,
+	})
+	await process_frame
+	var fancy_frame := profile.get_node("FancyExpFrame") as TextureRect
+	var fancy_fill := profile.get_node("FancyExpFill") as TextureRect
+	var fancy_overall_ratio := ExpSystem.overall_progress_ratio({"等级": 9, "经验": 4.0})
+	_check((profile.get_node("FancyExpValue") as Label).text == "Lv. 9" \
+		and absf(fancy_fill.size.x - fancy_frame.size.x * fancy_overall_ratio) < 0.8,
+		"缓存经验变化后个人中心无需重进场景即可实时刷新",
+		"label=%s fill=%.1f frame=%.1f" % [
+			(profile.get_node("FancyExpValue") as Label).text, fancy_fill.size.x, fancy_frame.size.x])
+	_check(int(profile_store.get_mode_progress("花式").get("等级", 0)) == 8 \
+		and int(profile_store.get_mode_progress_for_display("花式").get("等级", 0)) == 9,
+		"缓存预览只影响显示进度，不提前篡改正式存档")
+	profile_store.set_mode_progress("花式", {
+		"等级": 10, "经验": 1.0, "累计歌曲": 19, "累计首数": 7,
+	})
+	await process_frame
+	_check((profile.get_node("FancyExpValue") as Label).text == "Lv. 10" \
+		and int(profile_store.get_mode_progress_for_display("花式").get("等级", 0)) == 10,
+		"正式经验入账后立即替换缓存预览并刷新个人中心")
 
 	var welcome := profile.get_node("WelcomeText") as Label
 	_check(welcome.text == ORIGINAL_WELCOME, "右侧介绍区逐字使用当前原版文案", welcome.text)

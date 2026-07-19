@@ -73,29 +73,29 @@ func _initialize() -> void:
 	await process_frame
 	await process_frame
 
-	# 原版只在引导/背景板开始的 1.22 秒触发一次完整 READY/GO 音效。
+	# 音效约 2.944 秒：在 ARE YOU READY 出字时触发，与后续 GAME START/右退自然同步。
 	var ready = gameplay.get("ready_anim")
 	_check(ready != null and ready.has_method("advance_for_test"),
 		"准备动画支持复用正式时间轴的音效触发测试")
 	_clear_events()
 	if ready != null:
 		ready.call("play")
-		ready.call("advance_for_test", 1.21)
-		_check(_events().is_empty(), "1.22 秒前不提前播放准备音效", str(_events()))
-		ready.call("advance_for_test", 1.23)
+		ready.call("advance_for_test", 4.77)
+		_check(_events().is_empty(), "ARE YOU READY 出字前不提前播放准备音效", str(_events()))
+		ready.call("advance_for_test", 4.79)
 		var ready_events := _events()
-		_check(ready_events.size() == 1, "READY/GO 音效在引导开始时只播放一次",
+		_check(ready_events.size() == 1, "READY/GO 音效只播放一次",
 			str(ready_events))
 		if ready_events.size() == 1:
 			_check(str(ready_events[0].get("eventKey", "")) == "gameplay.ready_sequence",
 				"准备音效事件类型正确", str(ready_events[0]))
-			_check(absf(float(ready_events[0].get("timelineSeconds", -1.0)) - 1.22) <= 0.001,
-				"准备音效触发点精确为 1.22 秒", str(ready_events[0]))
-		ready.call("advance_for_test", 4.57)
-		_check(_events().size() == 1, "GO 与退场阶段不会重复播放准备音效",
+			_check(absf(float(ready_events[0].get("timelineSeconds", -1.0)) - 4.78) <= 0.001,
+				"准备音效触发点与 ARE YOU READY 出字同步", str(ready_events[0]))
+		ready.call("advance_for_test", 8.15)
+		_check(_events().size() == 1, "GAME START 与退场阶段不会重复播放准备音效",
 			str(_events()))
 		ready.call("stop")
-		ready.call("advance_for_test", 4.57)
+		ready.call("advance_for_test", 8.15)
 		_check(_events().size() == 1, "跳过/停止准备动画后不会残留延迟音效",
 			str(_events()))
 

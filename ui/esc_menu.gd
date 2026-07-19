@@ -30,8 +30,9 @@ var _profile_avatar: TextureRect
 var _profile_name_input: LineEdit
 var _profile_file_dialog: FileDialog
 var _profile_feedback: Label
+var _profile_refresh_queued := false
 
-const FPS_OPTIONS := [60, 120, 144, 240, 0]  # 0=不限
+const FPS_OPTIONS := [60, 120, 144, 165, 240]
 const BASE_TAB_DEFS := [
 	["谱面设置", "CHART"], ["背景设置", "BACKGROUND"],
 	["游戏 / 分辨率设置", "GAME / DISPLAY"], ["键位设置", "BINDINGS"],
@@ -60,8 +61,10 @@ const ROWS_BY_TAB := [
 	 ["动态背景", "_get_dynamic_background", "_step_dynamic_background", "切换动态背景样式"],
 	 ["背景亮度切换", "_get_brightness", "_step_brightness", "图片、视频和动态背景均可调节"]],
 	[["显示模式", "_get_display_mode", "_step_display_mode", "切换窗口 / Windows 独占全屏"],
-	 ["分辨率", "_get_resolution", "_step_resolution", "当前固定为原版设计分辨率"],
-	 ["渲染引擎", "_get_renderer", "_step_renderer", "当前 Godot 图形后端"],
+	 ["FPS 上限", "_get_fps", "_step_fps", "限制渲染帧率，降低菜单和选歌场景功耗"],
+	 ["垂直同步", "_get_vsync", "_step_vsync", "减少画面撕裂"],
+	 ["音量", "_get_volume", "_step_volume", "调整背景音乐音量"],
+	 ["静音", "_get_muted", "_step_muted", "关闭所有游戏音频"],
 	 ["状态HUD", "_get_status_hud", "_step_status_hud", "显示右下角 FPS / 渲染后端 / 分辨率"],
 	 ["极简性能模式", "_get_performance", "_step_performance", "关闭重型效果，优先保证帧率"],
 	 ["击中音效", "_get_hit_sound", "_step_hit_sound", "开关击中判定音效"],
@@ -79,6 +82,8 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_scan_skins()
 	_build_ui()
+	if not ProfileStore.progress_changed.is_connected(_on_profile_progress_changed):
+		ProfileStore.progress_changed.connect(_on_profile_progress_changed)
 	visible = false
 
 
@@ -145,7 +150,7 @@ func _step_brightness(dir: int) -> void:
 
 
 func _get_fps() -> String:
-	return "不限" if SettingsStore.max_fps == 0 else str(SettingsStore.max_fps)
+	return str(SettingsStore.max_fps)
 func _step_fps(dir: int) -> void:
 	var idx := FPS_OPTIONS.find(SettingsStore.max_fps)
 	idx = (idx + dir + FPS_OPTIONS.size()) % FPS_OPTIONS.size()
@@ -222,6 +227,9 @@ func _step_renderer(_dir: int) -> void: pass
 func _get_status_hud() -> String: return "开启" if SettingsStore.status_hud_enabled else "关闭"
 func _step_status_hud(_dir: int) -> void:
 	SettingsStore.status_hud_enabled = not SettingsStore.status_hud_enabled
+	if StatusHud != null:
+		StatusHud.visible = SettingsStore.status_hud_enabled
+	setting_changed.emit("status_hud")
 func _get_performance() -> String: return "开启" if SettingsStore.performance_mode else "关闭"
 func _step_performance(_dir: int) -> void:
 	SettingsStore.performance_mode = not SettingsStore.performance_mode
@@ -238,7 +246,30 @@ func _tab_defs() -> Array:
 
 func open_menu() -> void:
 	visible = true
-	_refresh_all()
+	if _active_tab == 4:
+		_set_tab(4)
+	else:
+		_refresh_all()
+	var nav := _panel.get_node_or_null("NavPanel") as Control if _panel != null else null
+	var content := _panel.get_node_or_null("ContentPanel") as Control if _panel != null else null
+	if nav != null:
+		UiKit.animate_arcade_in(nav, Vector2(-18, 0), 0.17)
+	if content != null:
+		UiKit.animate_arcade_in(content, Vector2(18, 0), 0.19)
+
+
+func _on_profile_progress_changed(_mode_key: String, _progress: Dictionary,
+		_preview: bool) -> void:
+	if not visible or _active_tab != 4 or _profile_refresh_queued:
+		return
+	_profile_refresh_queued = true
+	call_deferred("_refresh_profile_tab_from_progress")
+
+
+func _refresh_profile_tab_from_progress() -> void:
+	_profile_refresh_queued = false
+	if visible and _active_tab == 4:
+		_set_tab(4)
 
 
 func close_menu() -> void:
@@ -280,6 +311,19 @@ func _build_ui() -> void:
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(dim)
 
+	# 原版设置页纹理只作为结构底图，功能控件仍由 Godot 动态构建。
+	var settings_texture := TextureRect.new()
+	settings_texture.name = "OriginalSettingsTexture"
+	settings_texture.position = Vector2(250, 148)
+	settings_texture.size = Vector2(1520, 768)
+	settings_texture.texture = AssetLoader.tex("UI-img/选歌界面资源/设置/%s" % (
+		"设置背景图2p.png" if couple_mode else "设置背景图.png"))
+	settings_texture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	settings_texture.stretch_mode = TextureRect.STRETCH_SCALE
+	settings_texture.modulate = Color(0.72, 0.90, 1.0, 0.20)
+	settings_texture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(settings_texture)
+
 	# 青蓝/洋红双主色舞台光：设置页和暂停页共用同一视觉语言。
 	for spec in [
 		["MenuGlowCyan", Vector2(-180, 128), Vector2(980, 116), -11.0, Color(0.0, 0.86, 1.0, 0.12)],
@@ -305,14 +349,27 @@ func _build_ui() -> void:
 	nav.name = "NavPanel"
 	nav.position = Vector2(32, 32)
 	nav.size = Vector2(360, 1016)
-	nav.add_theme_stylebox_override("panel", _panel_style(Color(5.0 / 255.0, 18.0 / 255.0, 38.0 / 255.0, 0.98), Color(0.0, 0.82, 1.0, 0.78)))
+	nav.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
+		Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0))
 	_panel.add_child(nav)
+	var nav_frame := UiKit.hud_frame(nav, Rect2(Vector2.ZERO, nav.size),
+		"NavHudFrame", E5OriginalTheme.CYAN, E5OriginalTheme.MAGENTA,
+		124.0, true, 20.0)
+	nav_frame.fill_color = Color(0.008, 0.044, 0.105, 0.89)
+	nav_frame.header_color = Color(0.025, 0.18, 0.30, 0.72)
 	var content := Panel.new()
 	content.name = "ContentPanel"
 	content.position = Vector2(415, 32)
 	content.size = Vector2(1473, 1016)
-	content.add_theme_stylebox_override("panel", _panel_style(Color(4.0 / 255.0, 13.0 / 255.0, 31.0 / 255.0, 0.98), Color(0.55, 0.08, 0.72, 0.66)))
+	content.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
+		Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0))
 	_panel.add_child(content)
+	var content_frame := UiKit.hud_frame(content, Rect2(Vector2.ZERO, content.size),
+		"ContentHudFrame", E5OriginalTheme.CYAN, E5OriginalTheme.MAGENTA,
+		104.0, true, 22.0)
+	content_frame.fill_color = Color(0.006, 0.035, 0.090, 0.87)
+	content_frame.header_color = Color(0.022, 0.14, 0.26, 0.68)
+	content_frame.scanline_color = Color(0.20, 0.66, 1.0, 0.032)
 
 	var title := _mk_label(nav, "PAUSED" if in_gameplay else "ESC MENU", 42, Vector2(28, 30))
 	title.size = Vector2(304, 56)
@@ -336,18 +393,11 @@ func _build_ui() -> void:
 		tab.position = Vector2(24, 132 + i * (94 if in_gameplay else 112))
 		tab.size = Vector2(312, 72 if in_gameplay else 88)
 		tab.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		tab.add_theme_font_size_override("font_size", 20)
 		tab.pressed.connect(_set_tab.bind(i))
 		var action_tab := i >= 5
 		var danger_tab := action_tab and ((not in_gameplay) or i >= 7)
-		tab.add_theme_stylebox_override("normal", _button_style(
-			Color(0.025, 0.08, 0.13, 0.88),
-			Color(1.0, 0.22, 0.34, 0.78) if danger_tab else Color(0.08, 0.52, 0.72, 0.72)))
-		tab.add_theme_stylebox_override("hover", _button_style(
-			Color(0.04, 0.17, 0.24, 0.96),
-			Color(1.0, 0.38, 0.48, 0.96) if danger_tab else Color(0.18, 0.88, 1.0, 0.96)))
-		if action_tab:
-			tab.add_theme_color_override("font_color", Color(1.0, 0.78, 0.42) if not danger_tab else Color(1.0, 0.43, 0.48))
+		UiKit.skin_arcade_button(tab, false, danger_tab, 20,
+			E5OriginalTheme.MAGENTA if action_tab else E5OriginalTheme.CYAN)
 		nav.add_child(tab)
 		_tab_buttons.append(tab)
 
@@ -373,26 +423,14 @@ func _build_ui() -> void:
 
 
 func _panel_style(bg: Color, border: Color) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = bg
-	style.border_color = border
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(6 if in_gameplay else 10)
-	style.shadow_color = Color(0.0, 0.72, 1.0, 0.13) if in_gameplay else Color(0, 0, 0, 0.45)
-	style.shadow_size = 18 if in_gameplay else 14
-	return style
+	return E5OriginalTheme.panel_style(bg, border, 1, 0.06)
 
 
 func _button_style(bg: Color, border: Color) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = bg
-	style.border_color = border
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(5)
+	var style := E5OriginalTheme.panel_style(bg, border, 1, 0.05)
 	style.content_margin_left = 16
 	style.content_margin_right = 12
-	style.shadow_color = Color(border.r, border.g, border.b, 0.18)
-	style.shadow_size = 8
+	style.set_corner_radius_all(2)
 	return style
 
 
@@ -401,7 +439,7 @@ func _nav_action(parent: Control, text_value: String, pos: Vector2, cb: Callable
 	button.text = text_value
 	button.position = pos
 	button.size = Vector2(312, 58)
-	button.add_theme_font_size_override("font_size", 21)
+	UiKit.skin_arcade_button(button, false, false, 21)
 	button.pressed.connect(cb)
 	parent.add_child(button)
 	return button
@@ -413,14 +451,13 @@ func _set_tab(index: int) -> void:
 	for i in _tab_buttons.size():
 		var button := _tab_buttons[i]
 		var selected_tab := i == _active_tab
-		button.modulate = Color.WHITE if selected_tab else Color(0.55, 0.62, 0.72, 0.86)
+		var action_tab := i >= 5
+		var danger_tab := action_tab and ((not in_gameplay) or i >= 7)
+		button.modulate = Color.WHITE if selected_tab else Color(0.82, 0.88, 0.96, 0.86)
 		button.position.x = 32.0 if selected_tab else 24.0
 		button.size.x = 304.0 if selected_tab else 312.0
-		button.add_theme_color_override("font_color",
-			Color(0.86, 1.0, 1.0) if selected_tab else Color(0.76, 0.82, 0.90))
-		button.add_theme_stylebox_override("normal", _button_style(
-			Color(0.035, 0.17, 0.24, 0.98) if selected_tab else Color(0.025, 0.08, 0.13, 0.88),
-			Color(0.0, 0.94, 1.0, 0.98) if selected_tab else Color(0.08, 0.52, 0.72, 0.72)))
+		UiKit.skin_arcade_button(button, selected_tab, danger_tab, 20,
+			E5OriginalTheme.MAGENTA if action_tab else E5OriginalTheme.CYAN)
 	var title := _panel.get_node("ContentPanel/ContentTitle") as Label
 	title.text = "%s  /  %s" % [tabs[_active_tab][0], tabs[_active_tab][1]]
 	for child in _content_body.get_children():
@@ -676,9 +713,13 @@ func _build_profile_tab() -> void:
 	profile_card.name = "ProfileIdentityCard"
 	profile_card.position = Vector2(0, 0)
 	profile_card.size = Vector2(520, 842)
-	profile_card.add_theme_stylebox_override("panel", _panel_style(
-		Color(0.018, 0.055, 0.095, 0.97), Color(0.0, 0.88, 1.0, 0.90)))
+	profile_card.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
+		Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0))
 	_content_body.add_child(profile_card)
+	var identity_frame := UiKit.hud_frame(profile_card, Rect2(Vector2.ZERO, profile_card.size),
+		"IdentityHudFrame", E5OriginalTheme.CYAN, E5OriginalTheme.MAGENTA,
+		66.0, true, 18.0)
+	identity_frame.fill_color = Color(0.010, 0.052, 0.115, 0.96)
 
 	var eyebrow := _mk_label(profile_card, "PLAYER IDENTITY / 本机档案", 18, Vector2(34, 28))
 	eyebrow.size = Vector2(430, 34)
@@ -691,8 +732,9 @@ func _build_profile_tab() -> void:
 	_profile_avatar.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_profile_avatar.texture = _profile_avatar_texture()
 	_profile_avatar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var avatar_shader := Shader.new()
-	avatar_shader.code = "shader_type canvas_item; void fragment(){vec2 p=UV-vec2(0.5); if(dot(p,p)>0.25) discard; COLOR=texture(TEXTURE,UV)*COLOR;}"
+	_profile_avatar.modulate = Color.WHITE
+	_profile_avatar.self_modulate = Color.WHITE
+	var avatar_shader := load("res://fx/circular_avatar_mask.gdshader") as Shader
 	var avatar_material := ShaderMaterial.new()
 	avatar_material.shader = avatar_shader
 	_profile_avatar.material = avatar_material
@@ -709,7 +751,8 @@ func _build_profile_tab() -> void:
 	avatar_button.text = "更换头像"
 	avatar_button.position = Vector2(145, 334)
 	avatar_button.size = Vector2(230, 54)
-	avatar_button.add_theme_font_size_override("font_size", 21)
+	UiKit.skin_arcade_button(avatar_button, false, false, 21,
+		E5OriginalTheme.MAGENTA)
 	avatar_button.pressed.connect(_open_profile_avatar_dialog)
 	profile_card.add_child(avatar_button)
 
@@ -722,14 +765,14 @@ func _build_profile_tab() -> void:
 	_profile_name_input.position = Vector2(36, 468)
 	_profile_name_input.size = Vector2(448, 58)
 	_profile_name_input.max_length = 16
-	_profile_name_input.add_theme_font_size_override("font_size", 24)
+	UiKit.skin_arcade_input(_profile_name_input, 24)
 	_profile_name_input.text_submitted.connect(func(_text: String): _save_profile_name())
 	profile_card.add_child(_profile_name_input)
 	var save_name := Button.new()
 	save_name.text = "保存昵称"
 	save_name.position = Vector2(36, 544)
 	save_name.size = Vector2(448, 58)
-	save_name.add_theme_font_size_override("font_size", 22)
+	UiKit.skin_arcade_button(save_name, true, false, 22)
 	save_name.pressed.connect(_save_profile_name)
 	profile_card.add_child(save_name)
 	_profile_feedback = _mk_label(profile_card, "头像支持 PNG / JPG / WEBP，昵称最多 16 字。", 16,
@@ -743,34 +786,39 @@ func _build_profile_tab() -> void:
 	progress_card.name = "ProfileProgressCard"
 	progress_card.position = Vector2(552, 0)
 	progress_card.size = Vector2(837, 842)
-	progress_card.add_theme_stylebox_override("panel", _panel_style(
-		Color(0.032, 0.035, 0.085, 0.97), Color(0.90, 0.08, 0.78, 0.88)))
+	progress_card.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
+		Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0))
 	_content_body.add_child(progress_card)
+	var progress_frame := UiKit.hud_frame(progress_card, Rect2(Vector2.ZERO, progress_card.size),
+		"ProgressHudFrame", E5OriginalTheme.MAGENTA, E5OriginalTheme.CYAN,
+		66.0, true, 18.0)
+	progress_frame.fill_color = Color(0.024, 0.028, 0.082, 0.96)
 	var rank_title := _mk_label(progress_card, "RANK / 当前段位", 18, Vector2(38, 28))
 	rank_title.size = Vector2(350, 34)
 	rank_title.add_theme_color_override("font_color", Color(1.0, 0.36, 0.88))
 	var rank_icon := TextureRect.new()
 	rank_icon.name = "ProfileRankIcon"
-	rank_icon.texture = AssetLoader.tex(ProfileStore.get_rank_asset_path())
+	rank_icon.texture = AssetLoader.tex(ProfileStore.get_rank_asset_path_for_display())
 	rank_icon.position = Vector2(40, 74)
 	rank_icon.size = Vector2(260, 160)
 	rank_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	rank_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	rank_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	progress_card.add_child(rank_icon)
-	var rank_label := _mk_label(progress_card, ProfileStore.get_rank_label(), 46, Vector2(326, 94))
+	var rank_label := _mk_label(progress_card, ProfileStore.get_rank_label_for_display(), 46, Vector2(326, 94))
+	rank_label.name = "ProfileRankLabel"
 	rank_label.size = Vector2(420, 70)
 	rank_label.add_theme_color_override("font_color", Color(1.0, 0.91, 0.38))
-	var level_summary := _mk_label(progress_card, "最高竞技等级  Lv.%d" % ProfileStore.get_highest_competitive_level(),
+	var level_summary := _mk_label(progress_card, "最高模式等级  Lv.%d" % ProfileStore.get_highest_mode_level_for_display(),
 		22, Vector2(328, 164))
 	level_summary.size = Vector2(430, 42)
 	level_summary.add_theme_color_override("font_color", Color(0.72, 0.84, 0.96))
 
-	_build_profile_progress_row(progress_card, "花式", ProfileStore.get_mode_progress("花式"),
+	_build_profile_progress_row(progress_card, "花式", ProfileStore.get_mode_progress_for_display("花式"),
 		Vector2(38, 248), Color(0.02, 0.92, 1.0))
-	_build_profile_progress_row(progress_card, "竞速", ProfileStore.get_mode_progress("竞速"),
+	_build_profile_progress_row(progress_card, "竞速", ProfileStore.get_mode_progress_for_display("竞速"),
 		Vector2(38, 394), Color(1.0, 0.14, 0.76))
-	_build_profile_progress_row(progress_card, "diy", ProfileStore.get_mode_progress("DIY"),
+	_build_profile_progress_row(progress_card, "diy", ProfileStore.get_mode_progress_for_display("DIY"),
 		Vector2(38, 540), Color(0.72, 0.34, 1.0))
 	var stats: Dictionary = ProfileStore.profile.get("统计", {})
 	var stat_text := "MAX COMBO  %d     /     最高分  %d\n累计 S  %d          /     游玩 %d 分钟" % [
@@ -787,7 +835,7 @@ func _build_profile_progress_row(parent: Control, mode: String, progress: Dictio
 	var level := int(progress.get("等级", 1))
 	var exp := float(progress.get("经验", 0.0))
 	var need := ExpSystem.exp_to_next_level(level)
-	var ratio := 1.0 if level >= ExpSystem.MAX_LEVEL else clampf(exp / float(maxi(1, need)), 0.0, 1.0)
+	var ratio := ExpSystem.overall_progress_ratio(progress)
 	var display_mode := "DIY" if mode.to_lower() == "diy" else mode
 	var holder := Panel.new()
 	holder.name = "%sProgress" % mode
@@ -800,9 +848,12 @@ func _build_profile_progress_row(parent: Control, mode: String, progress: Dictio
 	title.name = "Level"
 	title.size = Vector2(430, 40)
 	title.add_theme_color_override("font_color", accent)
-	var value_text := "MAX" if level >= ExpSystem.MAX_LEVEL else "%.0f / %d EXP" % [exp, need]
-	var value := _mk_label(holder, value_text, 18, Vector2(470, 16))
-	value.size = Vector2(260, 36)
+	var overall_percent := roundi(ratio * 100.0)
+	var value_text := "总进度 100%  ·  MAX" if level >= ExpSystem.MAX_LEVEL else \
+		"总进度 %d%%  ·  本级 %.0f/%d EXP" % [overall_percent, exp, need]
+	var value := _mk_label(holder, value_text, 16, Vector2(410, 16))
+	value.name = "ProgressValue"
+	value.size = Vector2(320, 36)
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	var bar := ProgressBar.new()
 	bar.name = "%sExperienceProgress" % mode
@@ -813,18 +864,8 @@ func _build_profile_progress_row(parent: Control, mode: String, progress: Dictio
 	bar.value = ratio
 	bar.show_percentage = false
 	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var background_style := StyleBoxFlat.new()
-	background_style.bg_color = Color(0.01, 0.015, 0.035, 0.96)
-	background_style.border_color = Color(accent.r, accent.g, accent.b, 0.46)
-	background_style.set_border_width_all(2)
-	background_style.set_corner_radius_all(10)
-	var fill_style := StyleBoxFlat.new()
-	fill_style.bg_color = accent
-	fill_style.set_corner_radius_all(8)
-	fill_style.shadow_color = Color(accent.r, accent.g, accent.b, 0.70)
-	fill_style.shadow_size = 10
-	bar.add_theme_stylebox_override("background", background_style)
-	bar.add_theme_stylebox_override("fill", fill_style)
+	UiKit.skin_arcade_progress(bar, accent,
+		E5OriginalTheme.MAGENTA if mode != "竞速" else E5OriginalTheme.CYAN)
 	holder.add_child(bar)
 
 
@@ -903,7 +944,8 @@ func _build_action_tab(index: int) -> void:
 	confirm.text = "确认执行"
 	confirm.position = Vector2(330, 310)
 	confirm.size = Vector2(380, 86)
-	confirm.add_theme_font_size_override("font_size", 26)
+	UiKit.skin_arcade_button(confirm, local <= 1, destructive, 26,
+		E5OriginalTheme.MAGENTA if destructive else E5OriginalTheme.CYAN)
 	if local == 0:
 		confirm.text = "返回游戏"
 		confirm.pressed.connect(_on_resume_pressed)
@@ -936,7 +978,7 @@ func _build_exit_desktop_tab() -> void:
 	confirm.text = "确认退出游戏"
 	confirm.position = Vector2(330, 310)
 	confirm.size = Vector2(380, 86)
-	confirm.add_theme_font_size_override("font_size", 26)
+	UiKit.skin_arcade_button(confirm, false, true, 26, E5OriginalTheme.DANGER)
 	confirm.pressed.connect(_on_exit_desktop_pressed)
 	card.add_child(confirm)
 
@@ -979,7 +1021,8 @@ func _build_bindings() -> void:
 			button.size = Vector2(210, 96)
 			button.position = _binding_center(player, lane) - button.size * 0.5
 			button.alignment = HORIZONTAL_ALIGNMENT_CENTER
-			button.add_theme_font_size_override("font_size", 18)
+			UiKit.skin_arcade_button(button, false, false, 18,
+				E5OriginalTheme.CYAN if player == 0 else E5OriginalTheme.MAGENTA)
 			button.pressed.connect(_start_rebind.bind(action))
 			_content_body.add_child(button)
 			var icon := TextureRect.new()
@@ -1012,9 +1055,13 @@ func _refresh_binding_buttons() -> void:
 		var action := _binding_actions[i]
 		var codes: Array = SettingsStore.key_bindings.get(action, [])
 		var button := _binding_buttons[i]
+		var selected_button := i == _binding_selected
+		var rebinding := action == _rebinding_action
 		button.text = "        %s\n        %s" % [_binding_title(action), _key_names(codes)]
-		button.modulate = Color(0.45, 0.88, 1.0) if i == _binding_selected else Color.WHITE
-		if action == _rebinding_action:
+		button.modulate = Color.WHITE
+		UiKit.skin_arcade_button(button, selected_button or rebinding, false, 18,
+			E5OriginalTheme.CYAN if action.begins_with("p1_") else E5OriginalTheme.MAGENTA)
+		if rebinding:
 			button.text = "%s\n等待按键…（ESC 取消）" % _binding_title(action)
 
 
@@ -1180,8 +1227,16 @@ func _refresh_all() -> void:
 	for i in _row_nodes.size():
 		var holder: Control = _row_nodes[i]
 		var val: Label = holder.get_node("Value")
+		var selected_row := i == _selected
 		val.text = str(call(str(_row_defs[i][1])))
-		holder.modulate = Color(1.3, 1.3, 1.0) if i == _selected else Color.WHITE
+		val.add_theme_color_override("font_color",
+			E5OriginalTheme.GOLD if selected_row else E5OriginalTheme.CYAN_SOFT)
+		holder.modulate = Color.WHITE
+		if holder is Panel:
+			(holder as Panel).add_theme_stylebox_override("panel", _panel_style(
+				Color(0.055, 0.14, 0.18, 0.96) if selected_row else Color(0.016, 0.052, 0.10, 0.92),
+				E5OriginalTheme.GOLD if selected_row else Color(E5OriginalTheme.CYAN.r,
+					E5OriginalTheme.CYAN.g, E5OriginalTheme.CYAN.b, 0.42)))
 	_refresh_preview_panel()
 
 

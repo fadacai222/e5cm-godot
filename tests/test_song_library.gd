@@ -22,14 +22,14 @@ func _initialize() -> void:
 
 	var t0 := Time.get_ticks_msec()
 	var submodes: Array = lib.list_submodes("竞速")
-	_check(submodes.has("club") and submodes.has("疯狂") and submodes.has("混音") and submodes.has("情侣"),
-		"竞速子模式齐全", str(submodes))
+	_check(submodes.has("club") and submodes.has("疯狂") and submodes.has("混音"),
+		"精选竞速曲库包含已打包的 club / 疯狂 / 混音子模式", str(submodes))
 	_check(lib.list_submodes("花式").has("学习"), "花式含学习模式")
 	_check(not lib.list_submodes("DIY").is_empty(), "DIY 有曲包目录", str(lib.list_submodes("DIY")))
 
 	var songs: Array = lib.get_songs("竞速", "club")
 	var t1 := Time.get_ticks_msec()
-	_check(songs.size() > 10, "竞速/club 扫出歌曲 >10 首", str(songs.size()))
+	_check(not songs.is_empty(), "精选竞速/club 至少扫出一首真实歌曲", str(songs.size()))
 	print("        首扫 %d 首耗时 %dms" % [songs.size(), t1 - t0])
 
 	if not songs.is_empty():

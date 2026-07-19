@@ -6,10 +6,13 @@ extends Control
 
 const HP_OVERDRIVE_SPEED := 300.0
 const HP_OVERDRIVE_BASE_X := 345.0
+const HP_OVERDRIVE_PARTICLE_DELAY_SEC := 5.0
 const STAGE_GROUP_OFFSET_X := -105.0
 const STAGE_BOARD_ROTATION_DEG := 36.0
 const ACHIEVEMENT_TIMEOUT_SEC := 4.6
 const ROUTER_BUSY_TIMEOUT_SEC := 1.5
+const AUDIO_EVENT_GRACE_SEC := 0.35
+const MIN_VALID_AUDIO_DURATION_SEC := 0.5
 
 var payload := {}
 
@@ -46,6 +49,9 @@ var _hp_fill_region := Rect2()
 var _hp_fill_full_w := 0.0
 var _hp_overdrive_tile_width := 1.0
 var _hp_overdrive_material: ShaderMaterial
+var _hp_overdrive_full_hold := 0.0
+var _hp_overdrive_energy_active := false
+var _visual_paused := false
 var hp_overdrive_energy: HpOverdriveFx
 var ready_anim: ReadyAnim
 var esc_menu: EscMenu
@@ -83,6 +89,7 @@ var _audio_finished := false
 var _settlement_transition_started := false
 var _chart_ready := false
 var _load_error := ""
+var _loaded_audio_path := ""
 var _achievement_sfx_played := {}
 
 
@@ -99,7 +106,7 @@ func _ready() -> void:
 
 	_resolve_payload_paths()
 	_build_ui()
-	if _load_chart():
+	if await _load_chart():
 		_start()
 	else:
 		_show_load_error(_load_error)
@@ -107,6 +114,12 @@ func _ready() -> void:
 
 func _build_ui() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# 固定层级：背景 < 黑幕 < 判定区/辅助 UI < 顶部血条 < READY/GO。
+	# 黑幕只压暗背景，禁止再盖住判定区和血条。
+	bg_rect.z_index = -200
+	bg_dim.z_index = -100
+	_note_field_region.z_index = 0
+	hud.z_index = 100
 	_apply_background_mode()
 	var submode := str(payload.get("submode", ""))
 
@@ -136,6 +149,17 @@ func _build_ui() -> void:
 	ready_anim = ReadyAnim.new()
 	add_child(ready_anim)
 	ready_anim.audio_cue.connect(_on_ready_audio_cue)
+	if SettingsStore.show_ready_animation:
+		# 切场后的首帧立即锁在纯黑状态；谱面解析期间禁止 HUD/判定区抢先闪现。
+		ready_anim.prime()
+		hud.position = _hud_base_position + Vector2(0, -260.0)
+		hud.modulate = Color(1, 1, 1, 0.0)
+		note_field.modulate = Color(1, 1, 1, 0.0)
+		bg_dim.modulate = Color.WHITE
+		bg_dim.color = Color(0, 0, 0, ready_anim.intro_mask_alpha())
+	else:
+		ready_anim.stop()
+		bg_dim.modulate = Color.WHITE
 
 	esc_menu = EscMenu.new(true)
 	esc_menu.couple_mode = _is_couple_mode()
@@ -176,8 +200,9 @@ func _configure_original_hud(bb: Dictionary) -> void:
 	_set_control_rect(avatar, Rect2(196, 17, 137, 137))
 	avatar.pivot_offset = avatar.size * 0.5
 	avatar.clip_contents = false
-	var avatar_shader := Shader.new()
-	avatar_shader.code = "shader_type canvas_item;\nvoid fragment(){ vec2 p=UV-vec2(0.5); if(dot(p,p)>0.25){discard;} COLOR=texture(TEXTURE,UV)*COLOR; }"
+	avatar.modulate = Color.WHITE
+	avatar.self_modulate = Color.WHITE
+	var avatar_shader := load("res://fx/circular_avatar_mask.gdshader") as Shader
 	var avatar_material := ShaderMaterial.new()
 	avatar_material.shader = avatar_shader
 	avatar.material = avatar_material
@@ -394,6 +419,9 @@ void fragment() {
 func _build_gameplay_assists() -> void:
 	combo_milestone_fx = ComboMilestoneFx.new()
 	combo_milestone_fx.name = "ComboMilestoneFx"
+	combo_milestone_fx.level_changed.connect(_on_combo_fx_level_changed)
+	combo_milestone_fx.lane_fx_changed.connect(_on_combo_lane_fx_changed)
+	combo_milestone_fx.effect_visibility_changed.connect(_on_combo_fx_visibility_changed)
 	add_child(combo_milestone_fx)
 	shortcut_hint = Label.new()
 	shortcut_hint.name = "GameplayShortcutHint"
@@ -409,6 +437,21 @@ func _build_gameplay_assists() -> void:
 	shortcut_hint.z_index = 204
 	add_child(shortcut_hint)
 	_refresh_shortcut_hint()
+
+
+func _on_combo_fx_level_changed(level: int) -> void:
+	if note_field != null:
+		note_field.set_combo_gold_fx_level(level)
+
+
+func _on_combo_lane_fx_changed(enabled: bool) -> void:
+	if note_field != null and note_field.has_method("set_combo_lane_fx_enabled"):
+		note_field.set_combo_lane_fx_enabled(enabled)
+
+
+func _on_combo_fx_visibility_changed(value: float) -> void:
+	if note_field != null and note_field.has_method("set_combo_gold_fx_visibility"):
+		note_field.set_combo_gold_fx_visibility(value)
 
 
 func _refresh_shortcut_hint() -> void:
@@ -649,6 +692,7 @@ func _apply_background_mode() -> void:
 			bg_video.volume_db = -80.0
 			bg_video.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			bg_video.stream = video_stream
+			bg_video.z_index = -200
 			add_child(bg_video)
 			move_child(bg_video, bg_rect.get_index())
 			bg_rect.modulate.a = 0.16
@@ -657,6 +701,7 @@ func _apply_background_mode() -> void:
 	elif use_vinyl:
 		vinyl = VinylBg.new()
 		vinyl.position = Vector2(960, 540)
+		vinyl.z_index = -200
 		vinyl.setup(str(payload.get("cover", "")))
 		add_child(vinyl)
 		move_child(vinyl, _note_field_region.get_index())
@@ -679,6 +724,50 @@ func _resolve_payload_paths() -> void:
 		var path := str(payload.get(field, ""))
 		if not path.is_empty():
 			payload[field] = AssetLoader.abs_path(path)
+
+
+func _clip_events_to_song_duration(source: Array, audio_duration: float,
+		timeline: Array = [], offset := 0.0) -> Array:
+	if audio_duration <= MIN_VALID_AUDIO_DURATION_SEC:
+		return source
+	var playable_until := audio_duration + AUDIO_EVENT_GRACE_SEC
+	var clipped: Array = []
+	for raw_event in source:
+		if not raw_event is Dictionary:
+			continue
+		var start_sec := float((raw_event as Dictionary).get("start_sec", 0.0))
+		if not is_finite(start_sec) or start_sec > playable_until:
+			continue
+		var event: Dictionary = (raw_event as Dictionary).duplicate(true)
+		var end_sec := float(event.get("end_sec", start_sec))
+		if not is_finite(end_sec):
+			continue
+		if end_sec > playable_until:
+			event["end_sec"] = playable_until
+			# 秒边界和拍边界必须一起裁。否则恶意超长 Hold 虽然画面只剩几秒，
+			# ChartBuilder 仍可能遍历数百万拍生成 tick，造成主线程卡死。
+			if not timeline.is_empty() and event.has("end_beat"):
+				var clipped_end_beat := SmParser.sec_to_beat(playable_until + float(offset), timeline)
+				event["end_beat"] = maxf(float(event.get("start_beat", clipped_end_beat)),
+					clipped_end_beat)
+		if float(event.get("end_sec", start_sec)) < start_sec:
+			event["end_sec"] = start_sec
+			event["end_beat"] = event.get("start_beat", event.get("end_beat", 0.0))
+		clipped.append(event)
+	return clipped
+
+
+func _effective_chart_duration(parsed_duration: float, audio_duration: float) -> float:
+	return audio_duration if audio_duration > MIN_VALID_AUDIO_DURATION_SEC else parsed_duration
+
+
+func effective_chart_duration_for_test(parsed_duration: float, audio_duration: float) -> float:
+	return _effective_chart_duration(parsed_duration, audio_duration)
+
+
+func clip_events_to_song_duration_for_test(source: Array, audio_duration: float,
+		timeline: Array = [], offset := 0.0) -> Array:
+	return _clip_events_to_song_duration(source, audio_duration, timeline, offset)
 
 
 func _load_chart() -> bool:
@@ -709,20 +798,46 @@ func _load_chart() -> bool:
 
 	var parse_error := str(result.get("error", ""))
 	var events: Array = result.get("events", [])
-	chart_duration = float(result.get("duration", 0.0))
+	var parsed_duration := float(result.get("duration", 0.0))
 	if not parse_error.is_empty():
 		_load_error = "谱面解析失败：%s" % parse_error
 		return false
-	if events.is_empty() or chart_duration <= 0.5:
+	if events.is_empty():
 		_load_error = "谱面没有可玩的音符"
 		return false
 
 	track_count = 10 if int(result.get("columns", 5)) >= 10 else 5
 	hand_events = result.get("hand_events", [])
 	_hand_cursor = 0
-
 	var timeline: Array = result.get("timeline", [])
 	var offset := float(result.get("offset", 0.0))
+
+	# 歌曲长度必须以实际音频流为准。DIY JSON 可能用 0.001 BPM 表示终局冻结，
+	# 若只信谱面积分时长，会把两三分钟歌曲算成数十小时。
+	if not mp3_path.is_empty():
+		var prepared = payload.get("audio_stream")
+		if prepared is AudioStream:
+			music_player.stream = prepared
+		elif music_player.stream == null or _loaded_audio_path != mp3_path:
+			music_player.stream = await AudioDirector.load_song_stream_async(mp3_path)
+		if music_player.stream == null:
+			_load_error = "歌曲音频无法解码"
+			return false
+		_loaded_audio_path = mp3_path
+		payload["audio_stream"] = music_player.stream
+	var audio_duration := music_player.stream.get_length() if music_player.stream != null else 0.0
+	chart_duration = _effective_chart_duration(parsed_duration, audio_duration)
+	if chart_duration <= MIN_VALID_AUDIO_DURATION_SEC:
+		_load_error = "谱面或音频时长无效"
+		return false
+	if audio_duration > MIN_VALID_AUDIO_DURATION_SEC:
+		events = _clip_events_to_song_duration(events, audio_duration, timeline, offset)
+		hand_events = _clip_events_to_song_duration(hand_events, audio_duration, timeline, offset)
+		if events.is_empty():
+			_load_error = "谱面音符全部超出歌曲音频时长"
+			return false
+	music_player.volume_db = linear_to_db(0.9 if not SettingsStore.muted else 0.0001)
+
 	var b2s := func(beat: float) -> float:
 		return SmParser.beat_to_sec(beat, timeline) - offset
 	var chart := ChartBuilder.build(events, b2s)
@@ -745,30 +860,6 @@ func _load_chart() -> bool:
 	note_field.load_notes(chart_notes)
 	note_field.load_hand_events(hand_events)
 	note_field.set_grayscale(false)
-
-	if not mp3_path.is_empty():
-		var song_audio := AssetLoader.is_song_path(mp3_path)
-		if not song_audio and mp3_path.begins_with("res://") \
-				and ResourceLoader.exists(mp3_path):
-			music_player.stream = load(mp3_path) as AudioStream
-		# 项目根 songs 带 .gdignore，歌曲音频必须从原文件按需读取，不能依赖
-		# .godot/imported 中可能已经失效的旧 remap。
-		if music_player.stream == null and FileAccess.file_exists(mp3_path):
-			var f := FileAccess.open(mp3_path, FileAccess.READ)
-			if f == null:
-				_load_error = "歌曲音频无法打开"
-				return false
-			var data := f.get_buffer(f.get_length())
-			if mp3_path.to_lower().ends_with(".ogg"):
-				music_player.stream = AudioStreamOggVorbis.load_from_buffer(data)
-			else:
-				var mp3 := AudioStreamMP3.new()
-				mp3.data = data
-				music_player.stream = mp3
-		if music_player.stream == null:
-			_load_error = "歌曲音频无法解码"
-			return false
-	music_player.volume_db = linear_to_db(0.9 if not SettingsStore.muted else 0.0001)
 
 	_refresh_autoplay_badge()
 	_chart_ready = true
@@ -809,6 +900,8 @@ func _start() -> void:
 	_combo_anim_t = 0.0
 	_combo_last_value = -1
 	_last_combo_milestone = 0
+	_reset_hp_overdrive_stage()
+	_set_visual_pause(false)
 	if combo_milestone_fx != null:
 		combo_milestone_fx.stop_effect()
 	if note_field != null:
@@ -988,6 +1081,7 @@ func _on_esc_resumed() -> void:
 
 
 func _set_visual_pause(value: bool) -> void:
+	_visual_paused = value
 	if bg_video != null:
 		bg_video.paused = value
 	if stage_spectrum != null:
@@ -1058,20 +1152,35 @@ func _apply_reports(reports: Array) -> void:
 
 
 func _update_ready_reveal() -> void:
-	if ready_anim == null or not SettingsStore.show_ready_animation:
+	if ready_anim == null or not SettingsStore.show_ready_animation \
+			or ready_anim.is_complete():
 		hud.position = _hud_base_position
-		hud.modulate.a = 1.0
-		note_field.modulate.a = 1.0
+		hud.modulate = Color.WHITE
+		note_field.modulate = Color.WHITE
 		note_field.scale = Vector2.ONE
+		note_field.position = Vector2.ZERO
+		bg_dim.modulate = Color.WHITE
+		_apply_brightness()
 		return
-	var hud_t := ready_anim.hud_progress()
-	hud.position = _hud_base_position + Vector2(0, lerpf(-196.0, 0.0, hud_t))
-	hud.modulate.a = hud_t
+
+	# 黑幕位于背景之上、判定区和 HUD 之下。它只负责背景明暗，不参与 UI 透明度。
+	# 引导组右退时，把 70% 黑幕平滑交还给玩家设置，避免 GAME START 后亮度突然跳变。
+	bg_dim.modulate = Color.WHITE
+	var configured_dim_alpha := 0.45 + 0.1 * float(SettingsStore.background_brightness_level)
+	var intro_dim_alpha := lerpf(ready_anim.intro_mask_alpha(), configured_dim_alpha,
+		ready_anim.exit_progress())
+	bg_dim.color = Color(0, 0, 0, intro_dim_alpha)
+
+	# 判定区到点硬切显示，出现后始终满亮度。
 	var receptor_t := ready_anim.receptor_progress()
-	note_field.modulate.a = receptor_t
-	var receptor_scale := lerpf(1.18, 1.0, receptor_t)
-	note_field.scale = Vector2.ONE * receptor_scale
-	note_field.position = Vector2(960, 210) - Vector2(960, 210) * receptor_scale
+	note_field.modulate = Color(1, 1, 1, receptor_t)
+	note_field.scale = Vector2.ONE
+	note_field.position = Vector2.ZERO
+
+	# 顶部血条组从屏幕外缓慢落下，整个过程中保持原色满亮度。
+	var hud_t := ready_anim.hud_progress()
+	hud.position = _hud_base_position + Vector2(0, lerpf(-260.0, 0.0, hud_t))
+	hud.modulate = Color(1, 1, 1, 1.0 if hud_t > 0.0 else 0.0)
 
 
 func _hp_wave_offset(chart_time: float) -> float:
@@ -1081,6 +1190,36 @@ func _hp_wave_offset(chart_time: float) -> float:
 func _hp_overdrive_offset(chart_time: float) -> float:
 	return fposmod(maxf(0.0, chart_time) * HP_OVERDRIVE_SPEED,
 		maxf(1.0, _hp_overdrive_tile_width))
+
+
+func _reset_hp_overdrive_stage() -> void:
+	_hp_overdrive_full_hold = 0.0
+	_hp_overdrive_energy_active = false
+	if hp_overdrive_energy != null:
+		hp_overdrive_energy.set_energy_state(false, 0.0, 0.0, 0.0)
+
+
+func _update_hp_overdrive_stage(delta: float) -> void:
+	if hp == null or not hp.is_overdrive():
+		_reset_hp_overdrive_stage()
+		return
+	if _visual_paused:
+		return
+	_hp_overdrive_full_hold = minf(HP_OVERDRIVE_PARTICLE_DELAY_SEC,
+		_hp_overdrive_full_hold + maxf(0.0, delta))
+	_hp_overdrive_energy_active = _hp_overdrive_full_hold >= HP_OVERDRIVE_PARTICLE_DELAY_SEC
+
+
+func hp_overdrive_particle_delay_for_test() -> float:
+	return HP_OVERDRIVE_PARTICLE_DELAY_SEC
+
+
+func hp_overdrive_full_hold_for_test() -> float:
+	return _hp_overdrive_full_hold
+
+
+func hp_overdrive_energy_active_for_test() -> bool:
+	return _hp_overdrive_energy_active
 
 
 func _update_stage_motion(chart_time: float) -> void:
@@ -1102,6 +1241,7 @@ func _update_stage_motion(chart_time: float) -> void:
 
 
 func _update_dynamic_hud(chart_time: float, delta: float) -> void:
+	_update_hp_overdrive_stage(delta)
 	var wave := _hp_wave_offset(chart_time)
 	hp_bar_fill_tr.position.x = 283.0 + wave
 	hp_full_fx.position.x = HP_OVERDRIVE_BASE_X + wave
@@ -1111,7 +1251,8 @@ func _update_dynamic_hud(chart_time: float, delta: float) -> void:
 		_hp_overdrive_material.set_shader_parameter("phase_pixels", overdrive_phase)
 		_hp_overdrive_material.set_shader_parameter("pulse", overdrive_pulse)
 	if hp_overdrive_energy != null and hp != null:
-		hp_overdrive_energy.set_energy_state(hp.is_overdrive(), overdrive_phase,
+		hp_overdrive_energy.set_energy_state(
+			_hp_overdrive_energy_active and hp.is_overdrive(), overdrive_phase,
 			overdrive_pulse, wave)
 	var avatar := hud.get_node_or_null("Avatar") as TextureRect
 	if avatar != null:
@@ -1145,22 +1286,28 @@ func _update_combo_sprite() -> void:
 		return
 	var combo := score.current_combo
 	if combo != _combo_last_value:
-		var crossed_milestone := ComboMilestoneFx.milestone_for_combo(combo)
-		if combo < 100 and _last_combo_milestone >= 100:
-			# 百连演出不再按 5 秒结束；只有真实失误导致 Combo 断掉才关闭。
+		var crossed_stage := ComboMilestoneFx.effect_stage_for_combo(combo)
+		if combo < 50 and _last_combo_milestone >= 50:
+			# 50 Combo 预热阶段也参与缓退，断连后不瞬间撤走箭头金化。
 			_last_combo_milestone = 0
 			if combo_milestone_fx != null:
-				combo_milestone_fx.stop_effect()
-			if note_field != null:
+				combo_milestone_fx.start_decay()
+			elif note_field != null:
 				note_field.set_combo_gold_fx_level(0)
-		elif crossed_milestone > _last_combo_milestone:
-			_last_combo_milestone = crossed_milestone
+				if note_field.has_method("set_combo_lane_fx_enabled"):
+					note_field.set_combo_lane_fx_enabled(false)
+		elif crossed_stage > _last_combo_milestone:
+			_last_combo_milestone = crossed_stage
 			if combo_milestone_fx != null:
-				combo_milestone_fx.play_milestone(crossed_milestone, SettingsStore.performance_mode)
-			if note_field != null:
-				note_field.set_combo_gold_fx_level(crossed_milestone / 100)
-			AudioDirector.play_sfx(AssetLoader.sound("百连突破音效"),
-					"gameplay.combo_milestone.%d" % crossed_milestone)
+				if crossed_stage == 50:
+					combo_milestone_fx.play_arrow_stage(50, SettingsStore.performance_mode)
+				else:
+					combo_milestone_fx.play_milestone(crossed_stage, SettingsStore.performance_mode)
+			elif note_field != null:
+				note_field.set_combo_gold_fx_level(1 if crossed_stage == 50 \
+					else clampi(crossed_stage / 100, 1, 3))
+				if note_field.has_method("set_combo_lane_fx_enabled"):
+					note_field.set_combo_lane_fx_enabled(crossed_stage >= 100)
 		_combo_last_value = combo
 		if combo >= 2 and not score.last_judge.is_empty():
 			_combo_anim_t = 0.75
@@ -1240,16 +1387,17 @@ func _update_hud() -> void:
 	if hp_full_fx.visible:
 		hp_full_fx.modulate = Color.WHITE
 	if hp_overdrive_energy != null:
-		hp_overdrive_energy.visible = hp.is_overdrive()
+		hp_overdrive_energy.visible = _hp_overdrive_energy_active and hp.is_overdrive()
 
 
 func _on_restart() -> void:
 	conductor.stop()
+	_reset_hp_overdrive_stage()
 	if combo_milestone_fx != null:
 		combo_milestone_fx.stop_effect()
 	if note_field != null:
 		note_field.set_combo_gold_fx_enabled(false, 0.0)
-	if _load_chart():
+	if await _load_chart():
 		_start()
 	else:
 		_show_load_error(_load_error)
@@ -1258,6 +1406,7 @@ func _on_restart() -> void:
 func _on_quit_song() -> void:
 	_ended = true
 	conductor.stop()
+	_reset_hp_overdrive_stage()
 	if combo_milestone_fx != null:
 		combo_milestone_fx.stop_effect()
 	if note_field != null:
@@ -1272,6 +1421,7 @@ func _finish_song(failed: bool) -> void:
 		return
 	_ended = true
 	conductor.stop()
+	_reset_hp_overdrive_stage()
 	if combo_milestone_fx != null:
 		combo_milestone_fx.stop_effect()
 	if note_field != null:

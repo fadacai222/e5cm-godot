@@ -1,15 +1,21 @@
 class_name ComboMilestoneFx
 extends Control
-## 每 100 Combo 强化一次的持续轻量金色里程碑演出。
-## 左右空旷区域的导向带、扫描栅格和侧边粒子已按实机反馈彻底删除。
-## 当前只保留全局金色 Bloom、左上角里程碑数字和 NoteField 箭头逐级金化；
-## 效果不按时间结束，只在 Combo 断掉、重开、退出或结算时停止。
+
+signal level_changed(level: int)
+signal lane_fx_changed(enabled: bool)
+signal effect_visibility_changed(value: float)
+## Combo 50 先启用 NoteField 箭头/Key/Hold 金化；Combo 100 再开启轨道层、
+## 全局金色 Bloom 和左上角里程碑数字，随后每 100 Combo 强化一次并在 300 封顶。
+## 正常连击期间持续存在，断连后逐档衰减；重开、退出或结算时立即清理。
 
 const GOLD := Color(1.0, 0.66, 0.025, 1.0)
 const GOLD_HOT := Color(1.0, 0.995, 0.76, 1.0)
 const BASE_GLOBAL_GOLD_INTENSITY := 0.82
 const GLOBAL_GOLD_PER_LEVEL := 0.16
-const MAX_GLOBAL_GOLD_INTENSITY := 1.68
+const MAX_ENHANCEMENT_LEVEL := 3
+const MAX_GLOBAL_GOLD_INTENSITY := 1.14
+const DECAY_LEVEL_HOLD_SEC := 0.55
+const DECAY_FINAL_FADE_SEC := 0.75
 
 var _elapsed := 0.0
 var _impact_elapsed := 0.0
@@ -25,6 +31,11 @@ var _back_buffer: BackBufferCopy
 var _fullscreen_gold: ColorRect
 var _screen_gold_material: ShaderMaterial
 var _global_gold_intensity := 0.0
+var _lane_fx_enabled := false
+var _milestone_visual_active := false
+var _decaying := false
+var _decay_elapsed := 0.0
+var _decay_visibility := 1.0
 
 
 func _ready() -> void:
@@ -99,14 +110,46 @@ func configure_track_rect(rect: Rect2) -> void:
 		_track_rect = rect
 
 
+func play_arrow_stage(combo := 50, reduced_motion := false) -> void:
+	if combo < 50 or combo >= 100:
+		return
+	var was_active := _active
+	_combo = combo
+	_reduced_motion = reduced_motion
+	_decaying = false
+	_decay_elapsed = 0.0
+	_set_decay_visibility(1.0)
+	_set_level(1)
+	_set_lane_fx_enabled(false)
+	_milestone_visual_active = false
+	if not was_active:
+		_elapsed = 0.0
+	_impact_elapsed = 0.0
+	_active = true
+	visible = true
+	_number.text = str(combo)
+	_number.modulate.a = 0.0
+	_caption.modulate.a = 0.0
+	if _screen_gold_material != null:
+		_screen_gold_material.set_shader_parameter("fx_time", _elapsed)
+		_screen_gold_material.set_shader_parameter("fx_visibility", 0.0)
+		_screen_gold_material.set_shader_parameter("fx_intensity", 0.0)
+		_screen_gold_material.set_shader_parameter("fx_impact", 0.0)
+		_screen_gold_material.set_shader_parameter("reduced_motion", 1.0 if reduced_motion else 0.0)
+
+
 func play_milestone(combo: int, reduced_motion := false) -> void:
 	if combo < 100 or combo % 100 != 0:
 		return
 	var was_active := _active
 	_combo = combo
-	_level = maxi(1, combo / 100)
 	_reduced_motion = reduced_motion
-	_global_gold_intensity = _intensity_for_level(_level)
+	_decaying = false
+	_decay_elapsed = 0.0
+	_set_decay_visibility(1.0)
+	_set_level(clampi(combo / 100, 1, MAX_ENHANCEMENT_LEVEL))
+	_set_lane_fx_enabled(true)
+	_milestone_visual_active = true
 	if not was_active:
 		_elapsed = 0.0
 	_impact_elapsed = 0.0
@@ -128,20 +171,52 @@ func set_paused(value: bool) -> void:
 	_paused = value
 
 
+func start_decay() -> void:
+	if not _active or _level <= 0:
+		return
+	_decaying = true
+	_decay_elapsed = 0.0
+	_set_decay_visibility(1.0)
+
+
 func stop_effect() -> void:
+	var previous_level := _level
 	_active = false
+	_decaying = false
+	_decay_elapsed = 0.0
 	_level = 0
 	_combo = 0
 	_global_gold_intensity = 0.0
+	_milestone_visual_active = false
+	_set_lane_fx_enabled(false)
+	_set_decay_visibility(0.0)
 	if _screen_gold_material != null:
 		_screen_gold_material.set_shader_parameter("fx_visibility", 0.0)
 		_screen_gold_material.set_shader_parameter("fx_intensity", 0.0)
 		_screen_gold_material.set_shader_parameter("fx_impact", 0.0)
 	visible = false
+	if previous_level != 0:
+		level_changed.emit(0)
 
 
 func is_active() -> bool:
 	return _active
+
+
+func is_decaying() -> bool:
+	return _decaying
+
+
+func decay_level_hold_seconds_for_test() -> float:
+	return DECAY_LEVEL_HOLD_SEC
+
+
+func decay_final_fade_seconds_for_test() -> float:
+	return DECAY_FINAL_FADE_SEC
+
+
+func decay_visibility_for_test() -> float:
+	return _decay_visibility
 
 
 func track_rect_for_test() -> Rect2:
@@ -168,6 +243,14 @@ func milestone_level_for_test() -> int:
 	return _level
 
 
+func lane_fx_enabled_for_test() -> bool:
+	return _lane_fx_enabled
+
+
+func milestone_visual_active_for_test() -> bool:
+	return _milestone_visual_active
+
+
 ## 兼容旧测试/调用：侧边粒子已删除，固定返回 0。
 func gold_particle_count_for_test() -> int:
 	return 0
@@ -177,26 +260,82 @@ static func milestone_for_combo(combo: int) -> int:
 	return (combo / 100) * 100 if combo >= 100 else 0
 
 
+static func effect_stage_for_combo(combo: int) -> int:
+	if combo < 50:
+		return 0
+	if combo < 100:
+		return 50
+	return milestone_for_combo(combo)
+
+
+func _set_lane_fx_enabled(enabled: bool) -> void:
+	if enabled == _lane_fx_enabled:
+		return
+	_lane_fx_enabled = enabled
+	lane_fx_changed.emit(_lane_fx_enabled)
+
+
 func _intensity_for_level(level: int) -> float:
+	var capped_level := clampi(level, 1, MAX_ENHANCEMENT_LEVEL)
 	var value := minf(MAX_GLOBAL_GOLD_INTENSITY,
-		BASE_GLOBAL_GOLD_INTENSITY + float(maxi(0, level - 1)) * GLOBAL_GOLD_PER_LEVEL)
+		BASE_GLOBAL_GOLD_INTENSITY + float(capped_level - 1) * GLOBAL_GOLD_PER_LEVEL)
 	return value * (0.58 if _reduced_motion else 1.0)
+
+
+func _set_level(level: int) -> void:
+	var next_level := clampi(level, 0, MAX_ENHANCEMENT_LEVEL)
+	var changed := next_level != _level
+	_level = next_level
+	# 即使档位没变，也要按最新性能模式重新计算强度。
+	_global_gold_intensity = _intensity_for_level(_level) if _level > 0 else 0.0
+	if changed:
+		level_changed.emit(_level)
+
+
+func _set_decay_visibility(value: float) -> void:
+	var next_value := clampf(value, 0.0, 1.0)
+	if is_equal_approx(next_value, _decay_visibility):
+		return
+	_decay_visibility = next_value
+	effect_visibility_changed.emit(_decay_visibility)
+
+
+func _advance_decay(delta: float) -> void:
+	if not _decaying:
+		return
+	_decay_elapsed += maxf(0.0, delta)
+	while _level > 1 and _decay_elapsed >= DECAY_LEVEL_HOLD_SEC:
+		_decay_elapsed -= DECAY_LEVEL_HOLD_SEC
+		_set_level(_level - 1)
+	if _level != 1 or _decay_elapsed < DECAY_LEVEL_HOLD_SEC:
+		return
+	var fade_elapsed := _decay_elapsed - DECAY_LEVEL_HOLD_SEC
+	var fade_progress := clampf(fade_elapsed / DECAY_FINAL_FADE_SEC, 0.0, 1.0)
+	_set_decay_visibility(1.0 - smoothstep(0.0, 1.0, fade_progress))
+	if fade_progress >= 1.0:
+		stop_effect()
 
 
 func _process(delta: float) -> void:
 	if not _active or _paused:
 		return
+	_advance_decay(delta)
+	if not _active:
+		return
 	_elapsed += delta
 	_impact_elapsed += delta
-	var visibility := clampf(_elapsed / 0.24, 0.0, 1.0)
-	var pulse := 0.5 + 0.5 * sin(_elapsed * TAU * (1.45 + minf(0.55, float(_level) * 0.06)))
+	var visibility := clampf(_elapsed / 0.24, 0.0, 1.0) * _decay_visibility
+	var milestone_visibility := visibility if _milestone_visual_active else 0.0
+	var pulse := 0.5 + 0.5 * sin(_elapsed * TAU * (1.45 + minf(0.18, float(_level) * 0.06)))
 	var impact := exp(-_impact_elapsed * 4.8)
 	_number.scale = Vector2.ONE * (1.0 + impact * 0.40 + pulse * (0.020 + float(_level) * 0.0025))
-	_number.modulate.a = visibility * (0.78 + pulse * 0.22)
-	_caption.modulate.a = visibility * (0.70 + pulse * 0.30)
+	_number.modulate.a = milestone_visibility * (0.78 + pulse * 0.22)
+	_caption.modulate.a = milestone_visibility * (0.70 + pulse * 0.30)
 	_caption.position.x = 12.0 + sin(_elapsed * 4.0) * (1.0 if _reduced_motion else 4.0)
 	if _screen_gold_material != null:
 		_screen_gold_material.set_shader_parameter("fx_time", _elapsed)
-		_screen_gold_material.set_shader_parameter("fx_visibility", visibility)
-		_screen_gold_material.set_shader_parameter("fx_intensity", _global_gold_intensity)
-		_screen_gold_material.set_shader_parameter("fx_impact", impact)
+		_screen_gold_material.set_shader_parameter("fx_visibility", milestone_visibility)
+		_screen_gold_material.set_shader_parameter("fx_intensity",
+			_global_gold_intensity * _decay_visibility if _milestone_visual_active else 0.0)
+		_screen_gold_material.set_shader_parameter("fx_impact",
+			impact * _decay_visibility if _milestone_visual_active else 0.0)

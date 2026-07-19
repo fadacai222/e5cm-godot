@@ -42,14 +42,33 @@ var _render_hand_notes: Array = [] # 装饰手键 tap/hold；只播放，不进�
 var _judged_heads := {}          # note_idx -> true（tap 命中后隐藏）
 var _hold_active := {}           # note_idx -> true（hold 头命中，身体吸附判定线）
 var _note_pool: Array = []
-var _hold_tile_cache := {}       # "suffix:width:height" -> ImageTexture，避免逐帧纵向拉伸
+const HOLD_TILE_HEIGHT_STEP := 32
+const HOLD_TILE_CACHE_LIMIT := 96
+var _hold_tile_cache := {}       # "suffix:width:quantized_height" -> ImageTexture
+var _hold_tile_cache_order: Array[String] = []
 var _hand_pressed := {}          # "zone:side" -> bool
 var _active_hand_effects: Array[FrameAnim] = []
 var _visual_paused := false
+const COMBO_GOLD_MAX_LEVEL := 3
+const COMBO_LANE_TOP_Y := 110.0
+# 故意延伸到 1080p 画布外 12px，避免缩放/裁切时底部露出空缝。
+const COMBO_LANE_BOTTOM_Y := 1092.0
+
 var _combo_gold_fx_enabled := false
+var _combo_lane_fx_enabled := false
 var _combo_gold_fx_level := 0
 var _combo_gold_fx_elapsed := 0.0
+var _combo_gold_fx_visibility := 1.0
 var _combo_gold_material: ShaderMaterial
+var _combo_lane_fx_root: Node2D
+var _combo_lane_glow_lines: Array[Line2D] = []
+var _combo_lane_core_lines: Array[Line2D] = []
+var _combo_lane_flow_lines: Array[Line2D] = []
+var _combo_lane_flow_materials: Array[ShaderMaterial] = []
+var _combo_lane_outline_count := 0
+var _combo_lane_particles: Array[GPUParticles2D] = []
+var _combo_lane_particle_texture: Texture2D
+var _combo_lane_particle_ramp: GradientTexture1D
 
 # 判定弹字
 var _judge_popups: Array = []    # {sprite, t}
@@ -134,7 +153,29 @@ func setup(p_track_count: int, p_speed_mult: float, p_couple_mode := false) -> v
 			hs.z_index = 10
 			add_child(hs)
 			_hand_receptors.append(hs)
+	_rebuild_combo_lane_fx()
 	_apply_combo_gold_to_current_sprites()
+
+
+func _player_for_track(track: int) -> int:
+	return 2 if _couple_mode and track >= 5 else 1
+
+
+func _arrow_prefix_candidates(player: int) -> Array:
+	if not _couple_mode:
+		return ["arrow"]
+	# 与原版一致：1P 优先 larrow，2P 优先 rarrow；保留普通/异色兜底，
+	# 避免不完整皮肤再次把音符纹理解析成 null。
+	return ["rarrow", "arrow", "larrow"] if player >= 2 else \
+		["larrow", "arrow", "rarrow"]
+
+
+func _arrow_texture(kind: String, suffix: String, player := 1) -> Texture2D:
+	for prefix in _arrow_prefix_candidates(player):
+		var texture = _arrow_atlas.get("%s_%s_%s" % [prefix, kind, suffix])
+		if texture is Texture2D:
+			return texture as Texture2D
+	return null
 
 
 ## key_effect 帧分组：数字前缀升序前4组 = hand / lb / lt / cc（对应旧 击中特效序列帧.py）
@@ -234,7 +275,8 @@ func combo_fx_track_rect() -> Rect2:
 		return Rect2(600, 120, 720, 820)
 	var left := float(_lane_x[0]) - lane_width * 0.62
 	var right := float(_lane_x[_lane_x.size() - 1]) + lane_width * 0.62
-	return Rect2(left, 110.0, maxf(160.0, right - left), 840.0)
+	return Rect2(left, COMBO_LANE_TOP_Y, maxf(160.0, right - left),
+		COMBO_LANE_BOTTOM_Y - COMBO_LANE_TOP_Y)
 
 
 func _ensure_combo_gold_material() -> void:
@@ -246,41 +288,371 @@ func _ensure_combo_gold_material() -> void:
 	_combo_gold_material = ShaderMaterial.new()
 	_combo_gold_material.shader = shader
 	_combo_gold_material.set_shader_parameter("fx_time", 0.0)
-	_combo_gold_material.set_shader_parameter("fx_strength", 1.15)
-	_combo_gold_material.set_shader_parameter("outline_pixels", 2.8)
-	_combo_gold_material.set_shader_parameter("gold_fill", 0.12)
-	_combo_gold_material.set_shader_parameter("spark_density", 0.30)
+	_combo_gold_material.set_shader_parameter("fx_strength", 1.38)
+	_combo_gold_material.set_shader_parameter("outline_pixels", 3.4)
+	_combo_gold_material.set_shader_parameter("gold_fill", 0.16)
+	_combo_gold_material.set_shader_parameter("spark_density", 0.38)
+	_combo_gold_material.set_shader_parameter("fx_visibility", _combo_gold_fx_visibility)
 
 
-## 兼容旧调用；duration 参数故意忽略。百连金化只由 Combo 是否断掉控制。
+func _combo_lane_centers() -> Array[float]:
+	var centers: Array[float] = []
+	var zones := 2 if track_count >= 10 else 1
+	for zone in zones:
+		var base := zone * 5
+		if _lane_x.size() < base + 5:
+			continue
+		centers.append(float(_lane_x[base]) - lane_width)
+		for lane in 5:
+			centers.append(float(_lane_x[base + lane]))
+		centers.append(float(_lane_x[base + 4]) + lane_width)
+	return centers
+
+
+func _combo_lane_particle_tex() -> Texture2D:
+	if _combo_lane_particle_texture != null:
+		return _combo_lane_particle_texture
+	var image := Image.create(24, 24, false, Image.FORMAT_RGBA8)
+	for y in 24:
+		for x in 24:
+			var distance := Vector2(float(x) - 11.5, float(y) - 11.5).length() / 11.5
+			var alpha := pow(clampf(1.0 - distance, 0.0, 1.0), 2.55)
+			var hot_core := pow(clampf(1.0 - distance * 1.7, 0.0, 1.0), 2.0)
+			var rgb := Color(1.0, 0.82, 0.08).lerp(Color(1.0, 1.0, 0.94), hot_core)
+			image.set_pixel(x, y, Color(rgb.r, rgb.g, rgb.b, alpha))
+	_combo_lane_particle_texture = ImageTexture.create_from_image(image)
+	return _combo_lane_particle_texture
+
+
+func _combo_lane_particle_color_ramp() -> GradientTexture1D:
+	if _combo_lane_particle_ramp != null:
+		return _combo_lane_particle_ramp
+	var gradient := Gradient.new()
+	gradient.offsets = PackedFloat32Array([0.0, 0.16, 0.50, 0.78, 1.0])
+	gradient.colors = PackedColorArray([
+		Color(1.38, 1.30, 0.86, 0.0),
+		Color(1.32, 1.22, 0.66, 1.0),
+		Color(1.18, 0.90, 0.10, 0.96),
+		Color(1.0, 0.50, 0.008, 0.72),
+		Color(1.0, 0.24, 0.0, 0.0),
+	])
+	_combo_lane_particle_ramp = GradientTexture1D.new()
+	_combo_lane_particle_ramp.gradient = gradient
+	return _combo_lane_particle_ramp
+
+
+func _combo_lane_gradient(alpha: float, hot_core := false) -> Gradient:
+	var gradient := Gradient.new()
+	gradient.offsets = PackedFloat32Array([0.0, 0.10, 0.34, 0.52, 0.72, 0.91, 1.0])
+	if hot_core:
+		gradient.colors = PackedColorArray([
+			Color(1.0, 0.58, 0.0, 0.0),
+			Color(1.0, 0.82, 0.08, alpha * 0.52),
+			Color(1.28, 1.14, 0.48, alpha * 0.88),
+			Color(1.55, 1.48, 1.10, alpha),
+			Color(1.18, 0.92, 0.10, alpha * 0.90),
+			Color(1.0, 0.52, 0.005, alpha * 0.38),
+			Color(1.0, 0.30, 0.0, 0.0),
+		])
+	else:
+		gradient.colors = PackedColorArray([
+			Color(1.0, 0.35, 0.0, 0.0),
+			Color(1.0, 0.56, 0.01, alpha * 0.30),
+			Color(1.12, 0.82, 0.05, alpha * 0.60),
+			Color(1.32, 1.12, 0.40, alpha),
+			Color(1.02, 0.68, 0.02, alpha * 0.68),
+			Color(1.0, 0.42, 0.0, alpha * 0.24),
+			Color(1.0, 0.22, 0.0, 0.0),
+		])
+	return gradient
+
+
+func _free_combo_lane_fx() -> void:
+	if is_instance_valid(_combo_lane_fx_root):
+		remove_child(_combo_lane_fx_root)
+		_combo_lane_fx_root.free()
+	_combo_lane_fx_root = null
+	_combo_lane_glow_lines.clear()
+	_combo_lane_core_lines.clear()
+	_combo_lane_flow_lines.clear()
+	_combo_lane_flow_materials.clear()
+	_combo_lane_particles.clear()
+	_combo_lane_outline_count = 0
+
+
+func _create_combo_lane_edge(parent: Node2D, x: float, flow_shader: Shader,
+		phase: float) -> void:
+	var additive := CanvasItemMaterial.new()
+	additive.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+
+	# 仅绘制轨道边缘：宽幅外光晕负责炫光，轨道本体始终保持透明。
+	var glow_line := Line2D.new()
+	glow_line.name = "GoldEdgeGlow"
+	glow_line.width = 11.0
+	glow_line.antialiased = true
+	glow_line.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	glow_line.end_cap_mode = Line2D.LINE_CAP_ROUND
+	glow_line.points = PackedVector2Array([
+		Vector2(x, COMBO_LANE_TOP_Y), Vector2(x, COMBO_LANE_BOTTOM_Y),
+	])
+	glow_line.gradient = _combo_lane_gradient(0.24)
+	glow_line.material = additive
+	glow_line.z_index = 0
+	parent.add_child(glow_line)
+	_combo_lane_glow_lines.append(glow_line)
+
+	# 白热核心线提供清晰描边，不给轨道内部铺任何颜色。
+	var core_line := Line2D.new()
+	core_line.name = "GoldEdgeCore"
+	core_line.width = 2.8
+	core_line.antialiased = true
+	core_line.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	core_line.end_cap_mode = Line2D.LINE_CAP_ROUND
+	core_line.points = glow_line.points
+	core_line.gradient = _combo_lane_gradient(0.90, true)
+	core_line.material = additive
+	core_line.z_index = 1
+	parent.add_child(core_line)
+	_combo_lane_core_lines.append(core_line)
+
+	# 短段白金流光沿着描边高速向下移动；用几何段移动，避免重新照亮轨道本体。
+	var flow_line := Line2D.new()
+	flow_line.name = "GoldEdgeFlow"
+	flow_line.width = 7.0
+	flow_line.antialiased = true
+	flow_line.begin_cap_mode = Line2D.LINE_CAP_ROUND
+	flow_line.end_cap_mode = Line2D.LINE_CAP_ROUND
+	flow_line.points = PackedVector2Array([
+		Vector2(x, COMBO_LANE_TOP_Y), Vector2(x, COMBO_LANE_TOP_Y + 120.0),
+	])
+	flow_line.gradient = _combo_lane_gradient(1.0, true)
+	flow_line.z_index = 2
+	if flow_shader != null:
+		var flow_material := ShaderMaterial.new()
+		flow_material.shader = flow_shader
+		flow_material.set_shader_parameter("fx_time", 0.0)
+		flow_material.set_shader_parameter("intensity", 1.0)
+		flow_material.set_shader_parameter("lane_phase", phase)
+		flow_line.material = flow_material
+		_combo_lane_flow_materials.append(flow_material)
+	else:
+		flow_line.material = additive
+	parent.add_child(flow_line)
+	_combo_lane_flow_lines.append(flow_line)
+
+	var particles := GPUParticles2D.new()
+	particles.name = "GoldEdgeParticles"
+	particles.position = Vector2(x, (COMBO_LANE_TOP_Y + COMBO_LANE_BOTTOM_Y) * 0.5)
+	particles.amount = 30
+	particles.lifetime = 1.32
+	particles.randomness = 0.86
+	particles.texture = _combo_lane_particle_tex()
+	var lane_height := COMBO_LANE_BOTTOM_Y - COMBO_LANE_TOP_Y
+	particles.visibility_rect = Rect2(-48.0, -lane_height * 0.5 - 64.0,
+		96.0, lane_height + 128.0)
+	particles.draw_order = GPUParticles2D.DRAW_ORDER_LIFETIME
+	particles.fixed_fps = 30
+	particles.interpolate = true
+	particles.emitting = false
+	particles.z_index = 3
+	var material := ParticleProcessMaterial.new()
+	material.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_BOX
+	material.emission_box_extents = Vector3(3.2, lane_height * 0.5, 0.0)
+	material.direction = Vector3(0.0, -1.0, 0.0)
+	material.spread = 7.0
+	material.initial_velocity_min = 74.0
+	material.initial_velocity_max = 188.0
+	material.gravity = Vector3(0.0, -14.0, 0.0)
+	material.damping_min = 2.0
+	material.damping_max = 8.0
+	material.scale_min = 0.20
+	material.scale_max = 0.82
+	material.angular_velocity_min = -72.0
+	material.angular_velocity_max = 72.0
+	material.color = Color(1.24, 1.10, 0.42, 1.0)
+	material.color_ramp = _combo_lane_particle_color_ramp()
+	particles.process_material = material
+	particles.material = additive
+	parent.add_child(particles)
+	_combo_lane_particles.append(particles)
+
+
+func _rebuild_combo_lane_fx() -> void:
+	_free_combo_lane_fx()
+	_combo_lane_fx_root = Node2D.new()
+	_combo_lane_fx_root.name = "ComboGoldLaneFx"
+	_combo_lane_fx_root.z_index = 2
+	_combo_lane_fx_root.visible = false
+	add_child(_combo_lane_fx_root)
+	var half_width := lane_width * 0.39
+	var centers := _combo_lane_centers()
+	_combo_lane_outline_count = centers.size()
+	var flow_shader := load("res://fx/gold_lane_flow.gdshader") as Shader
+	var edge_index := 0
+	var edge_count := maxi(1, centers.size() * 2)
+	for center_value in centers:
+		var center := float(center_value)
+		_create_combo_lane_edge(_combo_lane_fx_root, center - half_width, flow_shader,
+			float(edge_index) / float(edge_count))
+		edge_index += 1
+		_create_combo_lane_edge(_combo_lane_fx_root, center + half_width, flow_shader,
+			float(edge_index) / float(edge_count))
+		edge_index += 1
+	_update_combo_lane_fx_style()
+
+
+func _update_combo_lane_fx_style() -> void:
+	if not is_instance_valid(_combo_lane_fx_root):
+		return
+	var enabled := _combo_gold_fx_enabled and _combo_lane_fx_enabled \
+		and _combo_gold_fx_level > 0
+	_combo_lane_fx_root.visible = enabled
+	var progress := clampf(float(maxi(1, _combo_gold_fx_level) - 1) / 2.0, 0.0, 1.0)
+
+	for line in _combo_lane_glow_lines:
+		line.width = lerpf(11.0, 17.0, progress)
+		line.gradient = _combo_lane_gradient(lerpf(0.24, 0.44, progress))
+	for line in _combo_lane_core_lines:
+		line.width = lerpf(2.8, 4.8, progress)
+		line.gradient = _combo_lane_gradient(lerpf(0.88, 1.0, progress), true)
+	for line in _combo_lane_flow_lines:
+		line.width = lerpf(6.5, 9.5, progress)
+		line.gradient = _combo_lane_gradient(1.0, true)
+	for flow_material in _combo_lane_flow_materials:
+		flow_material.set_shader_parameter("intensity", lerpf(1.05, 1.78, progress))
+
+	for particles in _combo_lane_particles:
+		particles.amount = roundi(lerpf(30.0, 58.0, progress)) \
+			if not SettingsStore.performance_mode else roundi(lerpf(18.0, 34.0, progress))
+		particles.speed_scale = lerpf(1.0, 1.24, progress)
+		var material := particles.process_material as ParticleProcessMaterial
+		if material != null:
+			material.initial_velocity_min = lerpf(74.0, 108.0, progress)
+			material.initial_velocity_max = lerpf(188.0, 286.0, progress)
+			material.scale_min = lerpf(0.20, 0.26, progress)
+			material.scale_max = lerpf(0.82, 1.18, progress)
+			material.color = Color(lerpf(1.24, 1.42, progress),
+				lerpf(1.10, 1.34, progress), lerpf(0.42, 0.76, progress), 1.0)
+		particles.emitting = enabled
+		if enabled:
+			particles.restart()
+	_combo_lane_fx_root.modulate = Color(1.0, 1.0, 1.0, _combo_gold_fx_visibility)
+
+
+func combo_lane_fx_count_for_test() -> int:
+	return _combo_lane_outline_count
+
+
+func combo_lane_particle_system_count_for_test() -> int:
+	return _combo_lane_particles.size()
+
+
+func combo_lane_fx_visible_for_test() -> bool:
+	return is_instance_valid(_combo_lane_fx_root) and _combo_lane_fx_root.visible
+
+
+func combo_lane_flow_material_count_for_test() -> int:
+	return _combo_lane_flow_materials.size()
+
+
+func combo_lane_flow_line_count_for_test() -> int:
+	return _combo_lane_flow_lines.size()
+
+
+func combo_lane_body_fill_count_for_test() -> int:
+	# 实际扫描节点，防止未来误把 Polygon2D 轨道面重新加回来。
+	if not is_instance_valid(_combo_lane_fx_root):
+		return 0
+	var count := 0
+	for child in _combo_lane_fx_root.get_children():
+		if child is Polygon2D:
+			count += 1
+	return count
+
+
+func combo_lane_edge_bottom_for_test() -> float:
+	var bottom := 0.0
+	for line in _combo_lane_glow_lines:
+		if not line.points.is_empty():
+			bottom = maxf(bottom, line.points[line.points.size() - 1].y)
+	return bottom
+
+
+func combo_lane_glow_line_count_for_test() -> int:
+	return _combo_lane_glow_lines.size() + _combo_lane_core_lines.size()
+
+
+func combo_lane_peak_particle_amount_for_test() -> int:
+	var peak := 0
+	for particles in _combo_lane_particles:
+		peak = maxi(peak, particles.amount)
+	return peak
+
+
+func combo_lane_flow_intensity_for_test() -> float:
+	if _combo_lane_flow_materials.is_empty():
+		return 0.0
+	return float(_combo_lane_flow_materials[0].get_shader_parameter("intensity"))
+
+
+## 兼容旧调用；显式启用时沿用旧行为，同时打开箭头与轨道层。
+## Gameplay 的 50/100 阶梯逻辑使用两个独立 setter，不走此兼容入口。
 func set_combo_gold_fx_enabled(enabled: bool, _duration := 0.0) -> void:
 	set_combo_gold_fx_level(1 if enabled else 0)
+	set_combo_lane_fx_enabled(enabled)
 
 
 func set_combo_gold_fx_level(level: int) -> void:
-	var next_level := maxi(0, level)
+	var next_level := clampi(level, 0, COMBO_GOLD_MAX_LEVEL)
 	var was_enabled := _combo_gold_fx_enabled
 	_combo_gold_fx_level = next_level
 	_combo_gold_fx_enabled = next_level > 0
+	if not _combo_gold_fx_enabled:
+		_combo_lane_fx_enabled = false
 	if _combo_gold_fx_enabled:
-		_ensure_combo_gold_material()
 		if not was_enabled:
 			_combo_gold_fx_elapsed = 0.0
+			_combo_gold_fx_visibility = 1.0
+		_ensure_combo_gold_material()
 		if _combo_gold_material != null:
-			var progress := clampf(float(next_level - 1) / 6.0, 0.0, 1.0)
-			_combo_gold_material.set_shader_parameter("fx_strength", lerpf(1.15, 2.85, progress))
-			_combo_gold_material.set_shader_parameter("outline_pixels", lerpf(2.8, 6.2, progress))
-			_combo_gold_material.set_shader_parameter("gold_fill", lerpf(0.12, 1.0, progress))
-			_combo_gold_material.set_shader_parameter("spark_density", lerpf(0.30, 0.88, progress))
+			_combo_gold_material.set_shader_parameter("fx_visibility", _combo_gold_fx_visibility)
+			# 保留原来 100/200/300 Combo 的强度，300 后不再继续变亮变粗。
+			var progress := clampf(float(next_level - 1) / 2.0, 0.0, 1.0)
+			_combo_gold_material.set_shader_parameter("fx_strength", lerpf(1.38, 2.10, progress))
+			_combo_gold_material.set_shader_parameter("outline_pixels", lerpf(3.4, 5.0, progress))
+			_combo_gold_material.set_shader_parameter("gold_fill", lerpf(0.16, 0.48, progress))
+			_combo_gold_material.set_shader_parameter("spark_density", lerpf(0.38, 0.62, progress))
+	_update_combo_lane_fx_style()
 	_apply_combo_gold_to_current_sprites()
+
+
+func set_combo_lane_fx_enabled(enabled: bool) -> void:
+	_combo_lane_fx_enabled = enabled and _combo_gold_fx_enabled and _combo_gold_fx_level > 0
+	_update_combo_lane_fx_style()
 
 
 func is_combo_gold_fx_enabled() -> bool:
 	return _combo_gold_fx_enabled
 
 
+func is_combo_lane_fx_enabled() -> bool:
+	return _combo_lane_fx_enabled
+
+
 func combo_gold_fx_level_for_test() -> int:
 	return _combo_gold_fx_level
+
+
+func set_combo_gold_fx_visibility(value: float) -> void:
+	_combo_gold_fx_visibility = clampf(value, 0.0, 1.0)
+	if _combo_gold_material != null:
+		_combo_gold_material.set_shader_parameter("fx_visibility", _combo_gold_fx_visibility)
+	if is_instance_valid(_combo_lane_fx_root):
+		_combo_lane_fx_root.modulate.a = _combo_gold_fx_visibility
+
+
+func combo_gold_fx_visibility_for_test() -> float:
+	return _combo_gold_fx_visibility
 
 
 func _update_combo_gold_fx(delta: float) -> void:
@@ -289,6 +661,46 @@ func _update_combo_gold_fx(delta: float) -> void:
 	_combo_gold_fx_elapsed += delta
 	if _combo_gold_material != null:
 		_combo_gold_material.set_shader_parameter("fx_time", _combo_gold_fx_elapsed)
+	for flow_material in _combo_lane_flow_materials:
+		flow_material.set_shader_parameter("fx_time", _combo_gold_fx_elapsed)
+	if is_instance_valid(_combo_lane_fx_root):
+		var level_progress := clampf(float(maxi(1, _combo_gold_fx_level) - 1) / 2.0,
+			0.0, 1.0)
+		var pulse := 0.95 + sin(_combo_gold_fx_elapsed * TAU * 1.45) * 0.05
+		var flash := pow(maxf(0.0, sin(_combo_gold_fx_elapsed * TAU * 2.8)), 18.0)
+		_combo_lane_fx_root.modulate = Color(1.0 + flash * 0.16,
+			1.0 + flash * 0.12, 1.0 + flash * 0.035,
+			pulse * _combo_gold_fx_visibility)
+		for i in _combo_lane_glow_lines.size():
+			var wave := 0.70 + 0.30 * sin(_combo_gold_fx_elapsed * 5.4 + float(i) * 0.58)
+			_combo_lane_glow_lines[i].modulate.a = wave
+		for i in _combo_lane_core_lines.size():
+			var shimmer := 0.84 + 0.16 * sin(_combo_gold_fx_elapsed * 8.2 + float(i) * 0.37)
+			_combo_lane_core_lines[i].modulate = Color(1.0 + shimmer * 0.12,
+				1.0 + shimmer * 0.08, 1.0, shimmer)
+
+		# 流光只是一段沿边缘移动的白金短线，不再生成任何轨道内部填充。
+		var travel_start := COMBO_LANE_TOP_Y - 150.0
+		var travel_end := COMBO_LANE_BOTTOM_Y + 180.0
+		var flow_speed := lerpf(0.72, 1.08, level_progress)
+		var segment_length := lerpf(110.0, 175.0, level_progress)
+		for i in _combo_lane_flow_lines.size():
+			var flow_line := _combo_lane_flow_lines[i]
+			var phase := fposmod(_combo_gold_fx_elapsed * flow_speed + float(i) * 0.083, 1.0)
+			var head_y := lerpf(travel_start, travel_end, phase)
+			var tail_y := head_y - segment_length
+			var clipped_top := maxf(COMBO_LANE_TOP_Y, tail_y)
+			var clipped_bottom := minf(COMBO_LANE_BOTTOM_Y, head_y)
+			if clipped_bottom <= clipped_top + 1.0:
+				flow_line.visible = false
+				continue
+			flow_line.visible = true
+			var edge_x := flow_line.points[0].x if not flow_line.points.is_empty() else 0.0
+			flow_line.points = PackedVector2Array([
+				Vector2(edge_x, clipped_top), Vector2(edge_x, clipped_bottom),
+			])
+			var flow_pulse := 0.90 + 0.10 * sin(_combo_gold_fx_elapsed * 11.0 + float(i))
+			flow_line.modulate = Color(1.18, 1.12, 0.82, flow_pulse)
 
 
 func _sync_combo_gold_material(sprite: Sprite2D) -> void:
@@ -557,11 +969,12 @@ func update_field(chart_time: float, delta: float) -> void:
 			_visual_x(float(_lane_x[track]), chart_time, start_sec, track)
 		var rotation := 0.0 if is_hold else _visual_rotation(chart_time, start_sec, track)
 		var suffix: String = ARROW_SUFFIX[_direction_indices[track % 5]]
+		var player := _player_for_track(track)
 		# 头
 		if item["head"] == null:
 			item["head"] = _acquire_sprite()
 		var head: Sprite2D = item["head"]
-		head.texture = _arrow_atlas.get("arrow_body_%s" % suffix)
+		head.texture = _arrow_texture("body", suffix, player)
 		head.position = Vector2(draw_x, head_y)
 		head.scale = Vector2(scale, scale)
 		head.rotation = (PI if reverse else 0.0) + rotation
@@ -572,9 +985,9 @@ func update_field(chart_time: float, delta: float) -> void:
 		if is_hold:
 			# 原版 atlas 语义：body 是头，mask 跨过头部中心，repeat 从 mask 底部
 			# 平铺到终点，tail 的顶部锚在终点；各段只做 0.5px 抗裂缝重叠。
-			var mask_source: Texture2D = _arrow_atlas.get("arrow_mask_%s" % suffix)
-			var body_source: Texture2D = _arrow_atlas.get("arrow_repeat_%s" % suffix)
-			var tail_source: Texture2D = _arrow_atlas.get("arrow_tail_%s" % suffix)
+			var mask_source := _arrow_texture("mask", suffix, player)
+			var body_source := _arrow_texture("repeat", suffix, player)
+			var tail_source := _arrow_texture("tail", suffix, player)
 			if mask_source == null:
 				mask_source = body_source
 			var mask_h := maxf(1.0, float(mask_source.get_height()) * scale) if mask_source != null else 1.0
@@ -597,8 +1010,10 @@ func update_field(chart_time: float, delta: float) -> void:
 			var tiled_len := maxf(1.0, float(geometry["body_bottom"]) - float(geometry["body_top"]))
 			var target_w := maxi(8, int(round(ARROW_SIZE * scale)))
 			var target_h := maxi(1, int(ceil(tiled_len)))
-			body.texture = _tiled_hold_texture(body_source, suffix, target_w, target_h)
-			body.scale = Vector2.ONE
+			body.texture = _tiled_hold_texture(body_source, "%d:%s" % [player, suffix],
+				target_w, target_h)
+			var body_texture_h := maxi(1, body.texture.get_height()) if body.texture != null else target_h
+			body.scale = Vector2(1.0, float(target_h) / float(body_texture_h))
 			body.position = Vector2(draw_x,
 				float(geometry["body_top"]) + float(target_h) * 0.5)
 			body.rotation = PI if reverse else 0.0
@@ -658,12 +1073,11 @@ func update_field(chart_time: float, delta: float) -> void:
 		timing_label.modulate.a = 1.0 - maxf(0.0, (timing_t - 0.50) / 0.32)
 
 
-func _hand_texture(kind: String, direction: String) -> Texture2D:
-	var key := "arrow_%s_%s" % [kind, direction]
-	var texture = _arrow_atlas.get(key)
+func _hand_texture(kind: String, direction: String, player: int) -> Texture2D:
+	var texture := _arrow_texture(kind, direction, player)
 	if texture == null:
-		texture = _arrow_atlas.get("arrow_%s_cc" % kind)
-	return texture as Texture2D
+		texture = _arrow_texture(kind, "cc", player)
+	return texture
 
 
 func _update_hand_notes(chart_time: float, speed: float, scale: float,
@@ -713,7 +1127,7 @@ func _update_hand_notes(chart_time: float, speed: float, scale: float,
 		if item["head"] == null:
 			item["head"] = _acquire_sprite()
 		var head := item["head"] as Sprite2D
-		head.texture = _hand_texture("body", direction)
+		head.texture = _hand_texture("body", direction, player)
 		head.position = Vector2(draw_x, head_y)
 		head.scale = Vector2.ONE * hand_scale
 		head.rotation = (PI if reverse else 0.0) + rotation
@@ -724,9 +1138,9 @@ func _update_hand_notes(chart_time: float, speed: float, scale: float,
 
 		if not is_hold:
 			continue
-		var mask_source := _hand_texture("mask", direction)
-		var body_source := _hand_texture("repeat", direction)
-		var tail_source := _hand_texture("tail", direction)
+		var mask_source := _hand_texture("mask", direction, player)
+		var body_source := _hand_texture("repeat", direction, player)
+		var tail_source := _hand_texture("tail", direction, player)
 		if mask_source == null:
 			mask_source = body_source
 		var mask_h := maxf(1.0, float(mask_source.get_height()) * hand_scale) \
@@ -751,10 +1165,12 @@ func _update_hand_notes(chart_time: float, speed: float, scale: float,
 		var tiled_length := maxf(1.0,
 			float(geometry["body_bottom"]) - float(geometry["body_top"]))
 		var target_h := maxi(1, int(ceil(tiled_length)))
-		body.texture = _tiled_hold_texture(body_source, "hand_%s" % direction, target_w, target_h)
+		body.texture = _tiled_hold_texture(body_source, "hand_%d_%s" % [player, direction],
+			target_w, target_h)
 		body.position = Vector2(draw_x,
 			float(geometry["body_top"]) + float(target_h) * 0.5)
-		body.scale = Vector2.ONE
+		var hand_body_texture_h := maxi(1, body.texture.get_height()) if body.texture != null else target_h
+		body.scale = Vector2(1.0, float(target_h) / float(hand_body_texture_h))
 		body.rotation = PI if reverse else 0.0
 		body.modulate = Color(1, 1, 1, _visual_alpha(body.position.y))
 		body.visible = body_source != null and absf(tail_y - head_y) > 1.0 \
@@ -777,8 +1193,12 @@ func _update_hand_notes(chart_time: float, speed: float, scale: float,
 func _tiled_hold_texture(source: Texture2D, suffix: String, target_w: int, target_h: int) -> Texture2D:
 	if source == null:
 		return null
-	var key := "%s:%d:%d" % [suffix, target_w, target_h]
+	var quantized_h := maxi(HOLD_TILE_HEIGHT_STEP,
+		int(ceil(float(target_h) / float(HOLD_TILE_HEIGHT_STEP))) * HOLD_TILE_HEIGHT_STEP)
+	var key := "%s:%d:%d" % [suffix, target_w, quantized_h]
 	if _hold_tile_cache.has(key):
+		_hold_tile_cache_order.erase(key)
+		_hold_tile_cache_order.append(key)
 		return _hold_tile_cache[key]
 	var source_image := source.get_image()
 	if source_image == null or source_image.is_empty():
@@ -787,16 +1207,28 @@ func _tiled_hold_texture(source: Texture2D, suffix: String, target_w: int, targe
 		maxf(1.0, float(source_image.get_width())))))
 	var tile := source_image.duplicate()
 	tile.resize(target_w, tile_h, Image.INTERPOLATE_BILINEAR)
-	var canvas := Image.create(target_w, target_h, false, Image.FORMAT_RGBA8)
+	var canvas := Image.create(target_w, quantized_h, false, Image.FORMAT_RGBA8)
 	canvas.fill(Color.TRANSPARENT)
 	var y := 0
-	while y < target_h:
-		var copy_h := mini(tile_h, target_h - y)
+	while y < quantized_h:
+		var copy_h := mini(tile_h, quantized_h - y)
 		canvas.blit_rect(tile, Rect2i(0, 0, target_w, copy_h), Vector2i(0, y))
 		y += tile_h
 	var texture := ImageTexture.create_from_image(canvas)
 	_hold_tile_cache[key] = texture
+	_hold_tile_cache_order.append(key)
+	while _hold_tile_cache_order.size() > HOLD_TILE_CACHE_LIMIT:
+		var oldest := str(_hold_tile_cache_order.pop_front())
+		_hold_tile_cache.erase(oldest)
 	return texture
+
+
+func hold_tile_cache_size_for_test() -> int:
+	return _hold_tile_cache.size()
+
+
+func hold_tile_height_step_for_test() -> int:
+	return HOLD_TILE_HEIGHT_STEP
 
 
 func _hand_target_position(dir: String, player: int) -> Vector2:

@@ -7,7 +7,9 @@ var payload := {}
 var _elapsed := 0.0
 var _done := false
 var _payload_ready := false
+var _go_requested := false
 var _load_error := ""
+var _audio_status: Label
 @onready var _background: TextureRect = $LoadingBackground
 @onready var _cover: TextureRect = $Cover
 @onready var _stars: Control = $Stars
@@ -20,12 +22,12 @@ func _ready() -> void:
 	payload = SceneRouter.take_payload()
 	_resolve_payload_paths()
 	_load_error = _validate_payload()
-	_payload_ready = _load_error.is_empty()
+	_payload_ready = false
 	_background.texture = AssetLoader.tex_key("背景_选歌")
 
 	# 封面区
 	_cover.texture = AssetLoader.tex(str(payload.get("cover", "")))
-	if not _payload_ready:
+	if not _load_error.is_empty():
 		_show_load_error(_load_error)
 
 	# 右侧信息区（星区 30% + 名区 18% + 数值区 18%）
@@ -63,6 +65,47 @@ func _ready() -> void:
 	_update_credit_label(GameState.credits)
 	GameState.credits_changed.connect(_update_credit_label)
 	AudioDirector.play_sfx(AssetLoader.sound("开始游戏") if AssetLoader.sound("开始游戏") != "" else "")
+	_build_audio_status()
+	if _load_error.is_empty():
+		_prepare_audio_async()
+
+
+func _build_audio_status() -> void:
+	_audio_status = Label.new()
+	_audio_status.name = "AudioLoadStatus"
+	_audio_status.position = Vector2(906, 735)
+	_audio_status.size = Vector2(764, 42)
+	_audio_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_audio_status.add_theme_font_size_override("font_size", 24)
+	_audio_status.add_theme_color_override("font_color", Color(0.75, 0.94, 1.0))
+	_audio_status.text = "正在准备歌曲音频…" if _load_error.is_empty() else ""
+	add_child(_audio_status)
+
+
+func _prepare_audio_async() -> void:
+	var prepared = payload.get("audio_stream")
+	if prepared is AudioStream:
+		_payload_ready = true
+		_audio_status.text = "歌曲音频已就绪"
+		return
+	var mp3_path := str(payload.get("mp3", ""))
+	if mp3_path.is_empty():
+		_payload_ready = true
+		_audio_status.text = "歌曲资源已就绪"
+		return
+	var stream := await AudioDirector.load_song_stream_async(mp3_path)
+	if not is_inside_tree() or _done:
+		return
+	if stream == null:
+		_load_error = "歌曲音频无法解码"
+		_audio_status.text = "音频载入失败"
+		_show_load_error(_load_error)
+		return
+	payload["audio_stream"] = stream
+	_payload_ready = true
+	_audio_status.text = "歌曲音频已就绪"
+	if _go_requested or _elapsed >= 3.0:
+		_go()
 
 
 func _update_credit_label(credits: int) -> void:
@@ -87,7 +130,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _go() -> void:
-	if _done or not _payload_ready:
+	if _done:
+		return
+	if not _payload_ready:
+		_go_requested = true
 		return
 	_done = true
 	SceneRouter.change_to("gameplay", payload, false)

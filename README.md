@@ -20,7 +20,7 @@ E5CM 是一个使用 Godot 4.6.2 重制的 Windows 舞蹈节奏游戏项目。
 - 精选曲库大小：约 221MB
 - `竞速/情侣`、`花式/情侣` 的源目录只有空谱面占位且没有音频，因此发行版不显示这两个无效模式
 
-完整曲库和历史开发资料只保存在本机归档目录，不进入 Git 仓库或安装包。
+完整曲库继续保留在项目根目录 `songs/`，构建过程只读使用，不移动、不替换；歌曲内容不进入 Git 仓库，安装包只包含独立生成的精选曲库。
 
 ## 基本操作
 
@@ -46,13 +46,12 @@ E5CM 是一个使用 Godot 4.6.2 重制的 Windows 舞蹈节奏游戏项目。
 - Python 3
 
 ```powershell
-python tools/release/build_release.py prepare
-Godot_v4.6.2-stable_win64_console.exe --headless --path . --export-release "Windows Desktop" "release/E5CM/E5CM.exe"
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" packaging/E5CM.iss
-powershell -ExecutionPolicy Bypass -File tools/release/smoke_installer.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\打包发行版.ps1
 ```
 
-`release/`、`.godot/`、完整歌曲内容和本机归档不会进入 Git。大型核心媒体使用 Git LFS 管理。
+脚本会自动完成：工具预检、每模式最多 4 首的独立发行曲库生成、Godot Windows 导出、完整开发索引恢复、便携版资产探针、Inno Setup 安装包编译、静默安装/启动/卸载烟雾测试，以及构建暂存清理。
+
+`release/`、`.godot/`、完整歌曲内容和构建暂存不会进入 Git。大型核心媒体使用 Git LFS 管理。
 
 ## 发布验证
 

@@ -87,3 +87,30 @@ static func highlight(target: Control, on: bool) -> void:
 	target.modulate = Color(1.25, 1.25, 1.0) if on else Color.WHITE
 	target.scale = Vector2(1.06, 1.06) if on else Vector2.ONE
 	target.pivot_offset = target.size * 0.5
+
+
+## 原版街机 HUD 共享入口。新菜单不要再直接使用 Godot 默认皮肤。
+static func hud_frame(parent: Control, rect: Rect2, node_name: String,
+		primary := E5OriginalTheme.CYAN, secondary := E5OriginalTheme.MAGENTA,
+		header := 0.0, scanlines := true, cut := 18.0) -> E5HudFrame:
+	return E5OriginalTheme.add_frame(parent, rect, node_name, primary, secondary,
+		header, scanlines, cut)
+
+
+static func skin_arcade_button(button: Button, selected := false,
+		danger := false, font_size := 20, accent := E5OriginalTheme.CYAN) -> void:
+	E5OriginalTheme.apply_button(button, selected, danger, font_size, accent)
+
+
+static func skin_arcade_input(input: LineEdit, font_size := 24) -> void:
+	E5OriginalTheme.apply_line_edit(input, font_size)
+
+
+static func skin_arcade_progress(progress: ProgressBar,
+		accent := E5OriginalTheme.CYAN, secondary := E5OriginalTheme.MAGENTA) -> void:
+	E5OriginalTheme.apply_progress(progress, accent, secondary)
+
+
+static func animate_arcade_in(panel: Control, offset := Vector2(0, 18),
+		duration := 0.18) -> Tween:
+	return E5OriginalTheme.animate_in(panel, offset, duration)

@@ -44,10 +44,18 @@ func change_to(scene_key: String, data := {}, fade := true) -> void:
 		var tw := create_tween()
 		tw.tween_property(_fade_rect, "color:a", 1.0, 0.2)
 		await tw.finished
-	get_tree().change_scene_to_file(SCENES[scene_key])
+	var err := get_tree().change_scene_to_file(SCENES[scene_key])
+	if err != OK:
+		push_error("SceneRouter: 场景切换失败 %s -> %s" % [scene_key, error_string(err)])
+		payload = {}
+		_fade_rect.color.a = 0.0
+		_busy = false
+		return
+	await get_tree().process_frame
 	if fade:
 		var tw2 := create_tween()
 		tw2.tween_property(_fade_rect, "color:a", 0.0, 0.3)
+		await tw2.finished
 	_busy = false
 
 
@@ -84,7 +92,14 @@ func change_to_with_zoom(scene_key: String, target: Control, data := {}, duratio
 	tween.parallel().tween_property(target, "modulate", end_color, expand_sec) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	await tween.finished
-	get_tree().change_scene_to_file(SCENES[scene_key])
+	var err := get_tree().change_scene_to_file(SCENES[scene_key])
+	if err != OK:
+		push_error("SceneRouter: 场景切换失败 %s -> %s" % [scene_key, error_string(err)])
+		payload = {}
+		_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_busy = false
+		return
+	await get_tree().process_frame
 	_fade_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_busy = false
 

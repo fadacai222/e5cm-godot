@@ -27,13 +27,39 @@ INDEX_PATH = PROJECT_ROOT / "assets" / "e5cm_runtime" / "song_index.json"
 INDEX_BACKUP = PROJECT_ROOT / ".release-backup" / "original-song_index.json"
 SAMPLE_INDEX = STAGING_ROOT / "release-song_index.json"
 SELECTION_MANIFEST = STAGING_ROOT / "release-song-selection.json"
-ARCHIVE_ROOT = PROJECT_ROOT.parent / "e5cm-godot-archive-20260718"
-FULL_SONGS_ARCHIVE = ARCHIVE_ROOT / "full-songs"
-DEV_ARCHIVE = ARCHIVE_ROOT / "development-files"
 
 CHART_EXTENSIONS = {".sm", ".ssc", ".json"}
 AUDIO_EXTENSIONS = {".mp3", ".ogg"}
 PATH_FIELDS = ("sm", "mp3", "cover", "video")
+EXPORT_PRESET_PATH = PROJECT_ROOT / "export_presets.cfg"
+EXACT_DUPLICATE_EXPORTS = (
+    (
+        "assets/video/player_select/003.mp4",
+        "assets/e5cm_runtime/backmovies/003.mp4",
+    ),
+    (
+        "assets/audio/player_select/ranking.mp3",
+        "assets/e5cm_runtime/冷资源/backsound/排行榜.mp3",
+    ),
+    (
+        "assets/fonts/fzhei.ttf",
+        "assets/e5cm_runtime/冷资源/字体/方正黑体简体.TTF",
+    ),
+    (
+        "assets/e5cm_runtime/UI-img/游戏界面/箭头/02/key_effect/skin.png",
+        "assets/e5cm_runtime/UI-img/游戏界面/箭头/03/key_effect/skin.png",
+    ),
+)
+REQUIRED_EXPORT_EXCLUSIONS = (
+    "addons/ffmpeg/**/~libgdffmpeg*",
+    "assets/e5cm_runtime/backmovies/003.mp4",
+    "assets/e5cm_runtime/UI-img/游戏界面/箭头/03/key_effect/skin.png",
+    "assets/e5cm_runtime/冷资源/**/*.ogg",
+    "assets/e5cm_runtime/冷资源/backsound/排行榜.mp3",
+    "assets/e5cm_runtime/冷资源/Buttonsound/点击-增益5.mp3",
+    "assets/e5cm_runtime/冷资源/Buttonsound/点击-增益5-旧的.mp3",
+    "assets/e5cm_runtime/冷资源/字体/方正黑体简体.TTF",
+)
 
 
 def log(message: str) -> None:
@@ -42,6 +68,39 @@ def log(message: str) -> None:
 
 def fail(message: str) -> None:
     raise RuntimeError(message)
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_release_asset_policy() -> None:
+    if not EXPORT_PRESET_PATH.is_file():
+        fail(f"导出配置不存在：{EXPORT_PRESET_PATH}")
+    preset_text = EXPORT_PRESET_PATH.read_text(encoding="utf-8")
+    missing_exclusions = [
+        path for path in REQUIRED_EXPORT_EXCLUSIONS if path not in preset_text
+    ]
+    if missing_exclusions:
+        fail("导出配置缺少资源去重项：" + ", ".join(missing_exclusions))
+
+    for canonical_relative, duplicate_relative in EXACT_DUPLICATE_EXPORTS:
+        canonical = PROJECT_ROOT / canonical_relative
+        duplicate = PROJECT_ROOT / duplicate_relative
+        if not canonical.is_file() or not duplicate.is_file():
+            fail(f"资源去重校验缺文件：{canonical_relative} / {duplicate_relative}")
+        canonical_hash = file_sha256(canonical)
+        duplicate_hash = file_sha256(duplicate)
+        if canonical_hash != duplicate_hash:
+            fail(
+                "原本重复的发行资源已经分叉，禁止继续排除副本："
+                f"{canonical_relative} != {duplicate_relative}"
+            )
+    log(f"RELEASE_ASSET_POLICY_VERIFIED duplicates={len(EXACT_DUPLICATE_EXPORTS)}")
 
 
 def directory_size(path: Path) -> int:
@@ -83,9 +142,7 @@ def locate_full_song_library() -> Path:
         )
         if song_folder_count > 100:
             return project_songs
-    if FULL_SONGS_ARCHIVE.is_dir():
-        return FULL_SONGS_ARCHIVE
-    fail("找不到完整曲库：项目 songs 已不是全量曲库，归档目录也不存在。")
+    fail("找不到完整曲库：项目 songs 不存在或看起来不是全量曲库。")
 
 
 def enumerate_mode_leaves(song_root: Path) -> list[Path]:
@@ -168,9 +225,6 @@ def locate_full_index() -> Path:
                 return INDEX_BACKUP
         except (OSError, json.JSONDecodeError):
             pass
-    archived = DEV_ARCHIVE / "original-song_index.json"
-    if archived.is_file():
-        return archived
     if INDEX_PATH.is_file():
         data = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
         if int(data.get("songVariantCount", 0)) > 1000:
@@ -326,6 +380,7 @@ def generate_brand_icon() -> None:
 
 
 def prepare() -> None:
+    verify_release_asset_policy()
     song_root = locate_full_song_library()
     log(f"FULL_SONGS={song_root}")
     if STAGING_ROOT.exists():
@@ -410,116 +465,66 @@ def verify_portable() -> None:
     log("PORTABLE_RELEASE_VERIFIED")
 
 
-def move_to_archive(source: Path, target: Path) -> None:
-    if not source.exists():
-        return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        fail(f"归档目标已存在，拒绝覆盖：{target}")
-    shutil.move(str(source), str(target))
-
-
 def finalize() -> None:
+    """完成发行清理，但绝不移动或替换开发用完整曲库。"""
     verify_portable()
     installer = RELEASE_ROOT / f"E5CM-Setup-{VERSION}.exe"
     smoke_marker = STAGING_ROOT / "installer-smoke-passed.txt"
     if not installer.is_file():
         fail(f"安装包不存在：{installer}")
     if not smoke_marker.is_file():
-        fail("安装包烟测标记不存在，禁止归档完整曲库。")
+        fail("安装包烟测标记不存在，禁止完成发行清理。")
 
-    # 只保留当前正式安装包，避免用户误点已经确认有问题的旧版本。
+    # 只保留当前正式安装包，避免误点已知有问题的旧版本。
     for old_installer in RELEASE_ROOT.glob("E5CM-Setup-*.exe"):
         if old_installer != installer:
             old_installer.unlink()
             log(f"REMOVED_OBSOLETE_INSTALLER={old_installer}")
 
-    ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
-    DEV_ARCHIVE.mkdir(parents=True, exist_ok=True)
-
     project_songs = PROJECT_ROOT / "songs"
-    if FULL_SONGS_ARCHIVE.exists():
-        # 支持上一次整理在后续垃圾文件删除处中断后的安全续跑。
-        current_song_folders = sum(1 for path in project_songs.rglob("*") if path.is_dir()) \
-            if project_songs.is_dir() else 0
-        if current_song_folders > 200:
-            fail(f"完整曲库归档已存在，但项目 songs 仍像全量曲库，拒绝覆盖：{FULL_SONGS_ARCHIVE}")
-        log("完整曲库已经归档，继续完成剩余清理。")
-    else:
-        move_to_archive(project_songs, FULL_SONGS_ARCHIVE)
-        shutil.copytree(PORTABLE_SONGS, project_songs)
     if not project_songs.is_dir():
-        shutil.copytree(PORTABLE_SONGS, project_songs)
-
-    if INDEX_BACKUP.is_file():
-        shutil.copy2(INDEX_BACKUP, DEV_ARCHIVE / "original-song_index.json")
-    shutil.copy2(SAMPLE_INDEX, INDEX_PATH)
-
-    archive_items = [
-        "AGENTS.md",
-        "继续开发入口.md",
-        "人工差异修复进度.md",
-        "docs",
-        "tasks",
-        "parity",
-        "预开发任务资源",
-        "清理旧AI产物.ps1",
-        "迁移曲库到项目外并清理缓存.bat",
-        "启动E5CM.bat",
-    ]
-    for relative in archive_items:
-        source = PROJECT_ROOT / relative
-        if source.exists():
-            move_to_archive(source, DEV_ARCHIVE / relative)
-
-    removable = [
-        PROJECT_ROOT / ".godot",
-        PROJECT_ROOT / "icon.svg",
-        PROJECT_ROOT / "icon.svg.import",
-        PROJECT_ROOT / "nul",
-    ]
-    for path in removable:
-        if path.is_dir():
-            shutil.rmtree(path)
-        elif path.exists():
-            try:
-                path.unlink()
-            except PermissionError:
-                # Windows 保留设备名（例如历史残留的 nul）必须使用扩展路径语法删除。
-                extended = Path("\\\\?\\" + str(path.resolve()))
-                try:
-                    os.unlink(extended)
-                except FileNotFoundError:
-                    pass
-
-    archive_manifest = {
-        "createdAtUnix": int(time.time()),
-        "releaseVersion": VERSION,
-        "project": str(PROJECT_ROOT),
-        "fullSongs": str(FULL_SONGS_ARCHIVE),
-        "developmentFiles": str(DEV_ARCHIVE),
-        "selectedSongs": str(project_songs),
-        "installer": str(installer),
-    }
-    (ARCHIVE_ROOT / "archive-manifest.json").write_text(
-        json.dumps(archive_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        fail("完整开发曲库 songs 不存在，拒绝完成发行清理。")
+    song_folder_count = sum(
+        1
+        for top in project_songs.iterdir()
+        if top.is_dir()
+        for sub in top.iterdir()
+        if sub.is_dir()
+        for song in sub.iterdir()
+        if song.is_dir()
     )
-    log(f"FULL_SONGS_ARCHIVED={FULL_SONGS_ARCHIVE}")
-    log(f"DEV_FILES_ARCHIVED={DEV_ARCHIVE}")
+    if song_folder_count <= 100:
+        fail(
+            "项目 songs 看起来已被精选曲库替换，拒绝完成发行清理："
+            f"song_folder_count={song_folder_count}"
+        )
 
-    # 发布完成后移除只用于本次构建的隐藏暂存目录；完整原索引已进入同级归档。
+    # 导出期间临时替换过静态索引；完成前再次强制恢复开发用完整索引。
+    if INDEX_BACKUP.is_file():
+        shutil.copy2(INDEX_BACKUP, INDEX_PATH)
+    else:
+        fail("完整歌曲索引备份不存在，拒绝删除发行暂存目录。")
+
+    # 只清理本次构建产生的隐藏暂存；release/ 产物与完整 songs/ 均保留。
     for transient in [STAGING_ROOT, PROJECT_ROOT / ".release-backup"]:
         if transient.is_dir():
             shutil.rmtree(transient)
+    log(f"FULL_SONGS_UNCHANGED={project_songs}")
+    log(f"FULL_SONG_FOLDER_COUNT={song_folder_count}")
     log("PROJECT_CLEANUP_FINALIZED")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="E5CM release builder")
-    parser.add_argument("command", choices=("prepare", "restore-index", "verify", "finalize"))
+    parser.add_argument(
+        "command",
+        choices=("audit-assets", "prepare", "restore-index", "verify", "finalize"),
+    )
     args = parser.parse_args()
     try:
-        if args.command == "prepare":
+        if args.command == "audit-assets":
+            verify_release_asset_policy()
+        elif args.command == "prepare":
             prepare()
         elif args.command == "restore-index":
             restore_index()

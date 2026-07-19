@@ -40,10 +40,12 @@ func _run_release_asset_probe() -> void:
 		"blood_bar_atlas": not AssetLoader.blood_bar_atlas().is_empty(),
 		"judge_text_atlas": not AssetLoader.judge_text_atlas().is_empty(),
 		"player_select_video": AssetLoader.resource_exists(AssetLoader.res_path("视频_玩家")),
+		"milestone_sound_removed": not AssetLoader.resource_exists(
+			"res://assets/e5cm_runtime/冷资源/Buttonsound/点击-增益5.mp3"),
 	}
 	var sound_keys := [
 		"音乐_UI", "音乐_开始", "音乐_show", "音乐_devil", "音乐_remix", "音乐_club",
-		"刷卡音效", "开始游戏", "准备就绪音效", "百连突破音效", "结算音效", "gameover",
+		"刷卡音效", "开始游戏", "准备就绪音效", "结算音效", "gameover",
 	]
 	for sound_key in sound_keys:
 		var path := AssetLoader.sound(sound_key)

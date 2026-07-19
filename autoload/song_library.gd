@@ -5,7 +5,7 @@ extends Node
 
 const CACHE_DIR := "user://cache"
 const CACHE_VERSION := 11
-const SEARCH_INDEX_VERSION := 2
+const SEARCH_INDEX_VERSION := 3
 const RUNTIME_ROOT := "res://assets/e5cm_runtime"
 const PROJECT_SONGS_ROOT := "res://songs"
 const LEGACY_PROJECT_SONGS_ROOT := RUNTIME_ROOT + "/songs"
@@ -43,6 +43,7 @@ var _search_blob_cache := {}
 var _search_index_payloads := {}  # library key -> {fingerprint, payload}
 var _scan_song_dir_calls_for_test := 0
 var _static_index_native_path := ""
+var _static_index_is_release_sample := false
 
 
 func _ready() -> void:
@@ -150,6 +151,16 @@ func _load_scan_cache_fast(key: String, base: String) -> Dictionary:
 	if cached.is_empty() \
 			or int(cached.get("base_modified", -1)) != _scan_cache_base_modified(base):
 		return {}
+	var cached_folders: Dictionary = cached.get("folders", {})
+	var current_folders := _list_dirs(base)
+	if current_folders.size() != cached_folders.size():
+		return {}
+	for raw_folder in current_folders:
+		var folder := str(raw_folder)
+		var previous: Dictionary = cached_folders.get(folder, {})
+		if previous.is_empty() \
+				or str(previous.get("signature", "")) != _song_folder_signature(base.path_join(folder)):
+			return {}
 	return cached
 
 
@@ -221,7 +232,8 @@ func get_songs(mode: String, submode: String) -> Array:
 		return _cache[key]
 	_ensure_static_index()
 	# DIY 是用户可热更新目录，静态索引不能作为真值，否则新增 JSON 谱面永远不可见。
-	if use_static_index and mode != "DIY" and _static_songs.has(key):
+	if use_static_index and mode != "DIY" and _static_songs.has(key) \
+			and _static_index_matches_installed_folders(mode, submode, _static_songs[key]):
 		var indexed_songs: Array = (_static_songs[key] as Array).duplicate(true)
 		# 先尝试搜索侧车缓存。命中时会连标题/歌手一起恢复，禁止再逐首读取谱面。
 		_ensure_search_index_sync(key, indexed_songs,
@@ -278,7 +290,8 @@ func get_songs_async(mode: String, submode: String) -> Array:
 		_emit_scan_progress(mode, submode, 1, 1, "已从内存缓存载入")
 		return _cache[key]
 	_ensure_static_index()
-	if use_static_index and mode != "DIY" and _static_songs.has(key):
+	if use_static_index and mode != "DIY" and _static_songs.has(key) \
+			and _static_index_matches_installed_folders(mode, submode, _static_songs[key]):
 		_emit_scan_progress(mode, submode, 0, 1, "正在读取曲库索引")
 		if is_inside_tree():
 			await get_tree().process_frame
@@ -345,7 +358,7 @@ func get_songs_async(mode: String, submode: String) -> Array:
 	_emit_scan_progress(mode, submode, total - 1, total, "正在整理歌曲元数据")
 	if is_inside_tree():
 		await get_tree().process_frame
-	_repair_song_names(songs)
+	await _repair_song_names_async(songs)
 	songs.sort_custom(func(a, b): return str(a["name"]) < str(b["name"]))
 	_cache[key] = songs
 	_save_scan_cache(key, base, fingerprint, songs, folder_entries)
@@ -374,6 +387,8 @@ func _ensure_static_index() -> void:
 		return
 	_static_songs = parsed.get("songsByKey", {})
 	_static_submodes = parsed.get("submodesByMode", {})
+	_static_index_is_release_sample = not str(parsed.get("releaseVersion", "")).is_empty() \
+			or parsed.has("releaseSeed")
 	_normalize_static_song_paths()
 
 
@@ -449,18 +464,14 @@ func _metadata_decoder_native_path() -> String:
 	return _metadata_decoder_native
 
 
-func _decode_song_metadata_batch(requests: Array) -> Array:
-	if requests.is_empty() or OS.get_name() != "Windows":
-		return []
-	var decoder_native := _metadata_decoder_native_path()
-	if decoder_native.is_empty() or not FileAccess.file_exists(decoder_native):
-		return []
-	var token := "%s_%s" % [Time.get_ticks_msec(), abs(hash(str(requests)))]
+func _run_metadata_decoder_job(requests: Array, decoder_native: String) -> Dictionary:
+	var token := "%s_%s_%s" % [Time.get_ticks_msec(), OS.get_thread_caller_id(),
+		abs(hash(str(requests)))]
 	var request_path := CACHE_DIR.path_join("metadata_request_%s.json" % token)
 	var output_path := CACHE_DIR.path_join("metadata_output_%s.json" % token)
 	var request_file := FileAccess.open(request_path, FileAccess.WRITE)
 	if request_file == null:
-		return []
+		return {"exit_code": FileAccess.get_open_error(), "decoded": [], "output": []}
 	request_file.store_string(JSON.stringify(requests))
 	request_file.close()
 	var command_output: Array = []
@@ -478,16 +489,56 @@ func _decode_song_metadata_batch(requests: Array) -> Array:
 			decoded = parsed
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(request_path))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(output_path))
+	return {"exit_code": exit_code, "decoded": decoded, "output": command_output}
+
+
+func _metadata_decoder_result(job_result) -> Array:
+	if not job_result is Dictionary:
+		return []
+	var result := job_result as Dictionary
+	var exit_code := int(result.get("exit_code", FAILED))
 	if exit_code != 0:
-		push_warning("SongLibrary: 曲库元数据跨编码解码失败：%s" % "\n".join(PackedStringArray(command_output)))
-	return decoded
+		var output: Array = result.get("output", [])
+		push_warning("SongLibrary: 曲库元数据跨编码解码失败：%s" %
+			"\n".join(PackedStringArray(output)))
+		return []
+	var decoded = result.get("decoded", [])
+	return decoded if decoded is Array else []
 
 
-func _repair_song_names(songs: Array) -> void:
+func _decode_song_metadata_batch(requests: Array) -> Array:
+	if requests.is_empty() or OS.get_name() != "Windows":
+		return []
+	var decoder_native := _metadata_decoder_native_path()
+	if decoder_native.is_empty() or not FileAccess.file_exists(decoder_native):
+		return []
+	return _metadata_decoder_result(_run_metadata_decoder_job(requests, decoder_native))
+
+
+func _decode_song_metadata_batch_async(requests: Array) -> Array:
+	if requests.is_empty() or OS.get_name() != "Windows":
+		return []
+	var decoder_native := _metadata_decoder_native_path()
+	if decoder_native.is_empty() or not FileAccess.file_exists(decoder_native):
+		return []
+	var worker := Thread.new()
+	var start_error := worker.start(_run_metadata_decoder_job.bind(
+		requests.duplicate(true), decoder_native))
+	if start_error != OK:
+		push_warning("SongLibrary: 元数据解码线程启动失败，回退同步兼容路径")
+		return _decode_song_metadata_batch(requests)
+	while worker.is_alive():
+		if is_inside_tree():
+			await get_tree().process_frame
+		else:
+			OS.delay_msec(1)
+	return _metadata_decoder_result(worker.wait_to_finish())
+
+
+func _prepare_song_name_repair(songs: Array) -> Dictionary:
 	_load_metadata_cache()
 	var requests: Array = []
 	var request_context := {}
-	var cache_changed := false
 	for i in songs.size():
 		if not songs[i] is Dictionary:
 			continue
@@ -518,7 +569,13 @@ func _repair_song_names(songs: Array) -> void:
 		var request_id := str(i)
 		requests.append({"id": request_id, "path": _native_path(sm_path)})
 		request_context[request_id] = {"index": i, "path": sm_path, "modified": modified}
-	for raw_result in _decode_song_metadata_batch(requests):
+	return {"requests": requests, "context": request_context}
+
+
+func _apply_song_name_repair_results(songs: Array, request_context: Dictionary,
+		decoded: Array) -> bool:
+	var cache_changed := false
+	for raw_result in decoded:
 		if not raw_result is Dictionary:
 			continue
 		var result: Dictionary = raw_result
@@ -531,6 +588,8 @@ func _repair_song_names(songs: Array) -> void:
 			continue
 		var context: Dictionary = request_context[request_id]
 		var index := int(context["index"])
+		if index < 0 or index >= songs.size() or not songs[index] is Dictionary:
+			continue
 		var song: Dictionary = songs[index]
 		song["name"] = title
 		if not artist.is_empty() and not _looks_mojibake(artist):
@@ -544,7 +603,24 @@ func _repair_song_names(songs: Array) -> void:
 			"encoding": str(result.get("encoding", "")),
 		}
 		cache_changed = true
-	if cache_changed:
+	return cache_changed
+
+
+func _repair_song_names(songs: Array) -> void:
+	var plan := _prepare_song_name_repair(songs)
+	var requests: Array = plan.get("requests", [])
+	var request_context: Dictionary = plan.get("context", {})
+	if _apply_song_name_repair_results(songs, request_context,
+			_decode_song_metadata_batch(requests)):
+		_save_metadata_cache()
+
+
+func _repair_song_names_async(songs: Array) -> void:
+	var plan := _prepare_song_name_repair(songs)
+	var requests: Array = plan.get("requests", [])
+	var request_context: Dictionary = plan.get("context", {})
+	var decoded := await _decode_song_metadata_batch_async(requests)
+	if _apply_song_name_repair_results(songs, request_context, decoded):
 		_save_metadata_cache()
 
 
@@ -553,9 +629,21 @@ func decode_song_metadata_for_test(path: String) -> Dictionary:
 	return decoded[0] if not decoded.is_empty() and decoded[0] is Dictionary else {}
 
 
+func decode_song_metadata_async_for_test(path: String) -> Dictionary:
+	var decoded := await _decode_song_metadata_batch_async(
+		[{"id": "0", "path": _native_path(path)}])
+	return decoded[0] if not decoded.is_empty() and decoded[0] is Dictionary else {}
+
+
 func repair_song_names_for_test(source: Array) -> Array:
 	var songs := source.duplicate(true)
 	_repair_song_names(songs)
+	return songs
+
+
+func repair_song_names_async_for_test(source: Array) -> Array:
+	var songs := source.duplicate(true)
+	await _repair_song_names_async(songs)
 	return songs
 
 
@@ -644,6 +732,53 @@ func _make_search_blob(song: Dictionary) -> String:
 	])
 
 
+static func classify_title_language(title: String) -> String:
+	var has_hangul := false
+	var has_kana := false
+	var has_han := false
+	var has_latin := false
+	for i in title.length():
+		var code := title.unicode_at(i)
+		if (code >= 0xAC00 and code <= 0xD7AF) \
+				or (code >= 0x1100 and code <= 0x11FF) \
+				or (code >= 0x3130 and code <= 0x318F):
+			has_hangul = true
+		elif (code >= 0x3040 and code <= 0x30FF) \
+				or (code >= 0x31F0 and code <= 0x31FF) \
+				or (code >= 0xFF66 and code <= 0xFF9F):
+			has_kana = true
+		elif (code >= 0x3400 and code <= 0x4DBF) \
+				or (code >= 0x4E00 and code <= 0x9FFF) \
+				or (code >= 0xF900 and code <= 0xFAFF):
+			has_han = true
+		elif (code >= 0x41 and code <= 0x5A) or (code >= 0x61 and code <= 0x7A):
+			has_latin = true
+	if has_hangul:
+		return "韩文"
+	if has_kana:
+		return "日文"
+	if has_han:
+		return "中文"
+	if has_latin:
+		return "英文"
+	return "其他"
+
+
+func filter_songs_by_title_language(source: Array, language: String) -> Array:
+	var wanted := language.strip_edges()
+	if wanted.is_empty() or wanted == "全部":
+		return source.duplicate()
+	return source.filter(func(raw_song):
+		if not raw_song is Dictionary:
+			return false
+		var song := raw_song as Dictionary
+		var detected := str(song.get("_title_language", ""))
+		if detected.is_empty():
+			detected = classify_title_language(str(song.get("name", "")))
+		return detected == wanted
+	)
+
+
 func _search_bigrams(text: String) -> Array:
 	var unique := {}
 	if text.length() < 2:
@@ -659,10 +794,12 @@ func _attach_search_payload(source: Array, key: String, payload: Dictionary) -> 
 	var names: Array = payload.get("names", [])
 	var artists: Array = payload.get("artists", [])
 	var subtitles: Array = payload.get("subtitles", [])
+	var languages: Array = payload.get("languages", [])
 	var grams = payload.get("grams", {})
 	if ids.size() != source.size() or blobs.size() != source.size() \
 			or names.size() != source.size() or artists.size() != source.size() \
-			or subtitles.size() != source.size() or not grams is Dictionary:
+			or subtitles.size() != source.size() or languages.size() != source.size() \
+			or not grams is Dictionary:
 		return false
 	for i in source.size():
 		if not source[i] is Dictionary:
@@ -672,6 +809,7 @@ func _attach_search_payload(source: Array, key: String, payload: Dictionary) -> 
 			song["name"] = str(names[i])
 		song["artist"] = str(artists[i])
 		song["subtitle"] = str(subtitles[i])
+		song["_title_language"] = str(languages[i])
 		song["_search_key"] = key
 		song["_search_index_pos"] = i
 		song["_search_id"] = str(ids[i])
@@ -691,6 +829,7 @@ func _build_search_index_payload(source: Array, key: String,
 	var names: Array = []
 	var artists: Array = []
 	var subtitles: Array = []
+	var languages: Array = []
 	var grams := {}
 	for i in source.size():
 		if not source[i] is Dictionary:
@@ -699,6 +838,7 @@ func _build_search_index_payload(source: Array, key: String,
 			names.append("")
 			artists.append("")
 			subtitles.append("")
+			languages.append("其他")
 			continue
 		var song: Dictionary = source[i]
 		if allow_metadata_read and str(song.get("artist", "")).strip_edges().is_empty():
@@ -710,6 +850,7 @@ func _build_search_index_payload(source: Array, key: String,
 		names.append(str(song.get("name", "")))
 		artists.append(str(song.get("artist", "")))
 		subtitles.append(str(song.get("subtitle", "")))
+		languages.append(classify_title_language(str(song.get("name", ""))))
 		for gram in _search_bigrams(blob):
 			if not grams.has(gram):
 				grams[gram] = []
@@ -721,6 +862,7 @@ func _build_search_index_payload(source: Array, key: String,
 		"names": names,
 		"artists": artists,
 		"subtitles": subtitles,
+		"languages": languages,
 		"grams": grams,
 	}
 	_attach_search_payload(source, key, payload)
@@ -782,12 +924,13 @@ func _ensure_search_index_async(key: String, source: Array, fingerprint: String,
 	_emit_scan_progress(mode, submode, 0, maxi(1, source.size()), "正在补齐歌曲搜索元数据")
 	if is_inside_tree():
 		await get_tree().process_frame
-	_repair_song_names(source)
+	await _repair_song_names_async(source)
 	var ids: Array = []
 	var blobs: Array = []
 	var names: Array = []
 	var artists: Array = []
 	var subtitles: Array = []
+	var languages: Array = []
 	var grams := {}
 	var total := maxi(1, source.size())
 	for i in source.size():
@@ -801,6 +944,7 @@ func _ensure_search_index_async(key: String, source: Array, fingerprint: String,
 		names.append(str(song.get("name", "")))
 		artists.append(str(song.get("artist", "")))
 		subtitles.append(str(song.get("subtitle", "")))
+		languages.append(classify_title_language(str(song.get("name", ""))))
 		for gram in _search_bigrams(blob):
 			if not grams.has(gram):
 				grams[gram] = []
@@ -817,6 +961,7 @@ func _ensure_search_index_async(key: String, source: Array, fingerprint: String,
 		"names": names,
 		"artists": artists,
 		"subtitles": subtitles,
+		"languages": languages,
 		"grams": grams,
 	}
 	_attach_search_payload(source, key, payload)
@@ -1108,6 +1253,28 @@ func _list_dirs(path: String) -> Array:
 	da.list_dir_end()
 	result.sort()
 	return result
+
+
+func _static_index_matches_installed_folders(mode: String, submode: String,
+		raw_indexed_songs) -> bool:
+	# 正式包索引只含每个模式最多 4 首。开发目录重新放回完整 songs 后，
+	# 不能继续把这个发行抽样索引当成完整曲库，否则界面永远只显示 4 首。
+	if not _static_index_is_release_sample:
+		return true
+	if not raw_indexed_songs is Array:
+		return false
+	var dir_name := str(MODE_DIRS.get(mode, ""))
+	if dir_name.is_empty():
+		return false
+	var installed_folders := _list_dirs(songs_root.path_join(dir_name).path_join(submode))
+	var indexed_folders := {}
+	for raw_song in raw_indexed_songs as Array:
+		if raw_song is Dictionary:
+			var folder := str((raw_song as Dictionary).get("folder", "")).strip_edges()
+			if not folder.is_empty():
+				indexed_folders[folder] = true
+	# 安装包目录与抽样索引一致时继续秒开；发现额外歌曲目录时改走增量扫描。
+	return installed_folders.size() <= indexed_folders.size()
 
 
 func _json_song_metadata(path: String) -> Dictionary:

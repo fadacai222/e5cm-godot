@@ -4,8 +4,12 @@ extends CanvasLayer
 ## 面板内边距 12×6，底色 rgba(6,8,12,126) 圆角 10，白描边 alpha 36 宽 1；
 ## 锚点 bottomright = (宽-14, 高-12)。所有场景常驻，随每帧刷新。
 
+const FPS_REFRESH_INTERVAL := 0.25
+
 var _panel: PanelContainer
 var _label: Label
+var _fps_refresh_elapsed := FPS_REFRESH_INTERVAL
+var _display_fps := 0.0
 
 
 func _ready() -> void:
@@ -37,12 +41,24 @@ func _renderer_label() -> String:
 	return "GPU-%s" % driver.capitalize() if not driver.is_empty() else "GPU"
 
 
-func _process(_delta: float) -> void:
+func fps_for_display(raw_fps: float) -> float:
+	if raw_fps <= 0.1:
+		return 0.0
+	# Godot 在极轻量菜单里可能瞬时统计出上千 FPS；实际渲染已经被设置上限约束，
+	# HUD 也必须按同一上限显示，避免瞬时采样抖动造成 2000+ 的假象。
+	return minf(raw_fps, float(maxi(1, SettingsStore.max_fps)))
+
+
+func _process(delta: float) -> void:
 	visible = SettingsStore.status_hud_enabled
 	if not visible:
 		return
-	var fps := Engine.get_frames_per_second()
-	var fps_text := "%.1f" % fps if fps > 0.1 else "--"
+	_fps_refresh_elapsed += maxf(0.0, delta)
+	if _fps_refresh_elapsed >= FPS_REFRESH_INTERVAL:
+		_fps_refresh_elapsed = 0.0
+		var sample := fps_for_display(Engine.get_frames_per_second())
+		_display_fps = sample if _display_fps <= 0.1 else lerpf(_display_fps, sample, 0.45)
+	var fps_text := "%.1f" % _display_fps if _display_fps > 0.1 else "--"
 	var view_size := get_viewport().get_visible_rect().size
 	_label.text = "%s FPS | %s | %d*%d" % [
 		fps_text, _renderer_label(), int(view_size.x), int(view_size.y)

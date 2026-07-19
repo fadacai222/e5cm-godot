@@ -12,6 +12,12 @@ extends RefCounted
 const FOOT_SLOT_TO_TRACK := {1: 0, 2: 1, 4: 2, 6: 3, 7: 4}
 const HAND_SLOT_TO_DIR := {0: "ll", 3: "tt", 5: "bb", 8: "rr"}
 const SLOTS_PER_GROUP := 10
+# E5 DIY 特效谱兼容阈值。事件时间轴保留作者原始 BPM；只有总时长估算
+# 会排除足以制造异常长尾的末尾极低 BPM，与旧项目补丁保持一致。
+const JSON_TERMINAL_FREEZE_BPM_THRESHOLD := 1.0
+const JSON_TERMINAL_FREEZE_ABNORMAL_SEC := 30.0
+const JSON_EXTREME_VISUAL_BPM_THRESHOLD := 1_000_000.0
+const JSON_DEFAULT_TICKS_PER_BEAT := 96
 
 
 # ============================ 文本工具 ============================
@@ -434,6 +440,173 @@ static func _json_tick_per_beat(data: Dictionary) -> int:
 	return 96
 
 
+static func _add_compat_patch(patches: Dictionary, patch_name: String) -> void:
+	if not patch_name.is_empty():
+		patches[patch_name] = true
+
+
+static func _compat_patch_list(patches: Dictionary) -> Array:
+	var result: Array = patches.keys()
+	result.sort()
+	return result
+
+
+static func _normalize_json_bpms(data: Dictionary, ticks_per_beat: int,
+		patches: Dictionary) -> Array:
+	var bpm_by_line := {}
+	var valid_count := 0
+	var raw_count := 0
+	var duplicate_count := 0
+	for raw_bpm in data.get("bpms", []):
+		raw_count += 1
+		if not raw_bpm is Dictionary:
+			_add_compat_patch(patches, "invalid_bpm_entries_ignored")
+			continue
+		var line_no := int((raw_bpm as Dictionary).get("lineNo",
+			(raw_bpm as Dictionary).get("line", 0)))
+		var bpm := float((raw_bpm as Dictionary).get("bpmVal",
+			(raw_bpm as Dictionary).get("bpm", 0.0)))
+		if line_no < 0 or not is_finite(bpm) or bpm <= 0.0:
+			_add_compat_patch(patches, "invalid_bpm_entries_ignored")
+			continue
+		if bpm_by_line.has(line_no):
+			duplicate_count += 1
+		bpm_by_line[line_no] = bpm # 同一行最后一个有效值获胜，与旧项目一致。
+		valid_count += 1
+	if duplicate_count > 0:
+		_add_compat_patch(patches, "duplicate_bpm_lines_collapsed")
+	if valid_count < raw_count:
+		_add_compat_patch(patches, "invalid_bpm_entries_ignored")
+	if bpm_by_line.is_empty():
+		_add_compat_patch(patches, "missing_bpm_defaulted")
+		return [[0.0, 120.0]]
+	var lines: Array = bpm_by_line.keys()
+	lines.sort()
+	var bpms: Array = []
+	for line_no in lines:
+		bpms.append([float(int(line_no)) / float(maxi(1, ticks_per_beat)),
+			float(bpm_by_line[line_no])])
+	if float(bpms[0][0]) > 0.0:
+		bpms.push_front([0.0, float(bpms[0][1])])
+		_add_compat_patch(patches, "initial_bpm_backfilled")
+	return bpms
+
+
+static func _recognized_json_arrow_type(arrow_type: int) -> bool:
+	return arrow_type in [0, 1, 2, 3, 4, 5, 6, 7, 8]
+
+
+static func _json_last_playable_beat(data: Dictionary, ticks_per_beat: int,
+		patches: Dictionary) -> float:
+	var last_line := 0
+	var boards: Array = data.get("boards", [])
+	if boards.is_empty() or not boards[0] is Dictionary:
+		return 0.0
+	# build_json_events 当前只消费主 board，时长估算必须使用同一数据边界；
+	# 否则未选中的备用 board 可能把当前谱面的时长无故拉长。
+	for raw_line in (boards[0] as Dictionary).get("lineDatas", []):
+		if not raw_line is Dictionary:
+			continue
+		var line_no := int((raw_line as Dictionary).get("lineNo", 0))
+		if line_no < 0:
+			_add_compat_patch(patches, "invalid_note_fields_sanitized")
+			continue
+		for raw_arrow in (raw_line as Dictionary).get("arrows", []):
+			if not raw_arrow is Dictionary:
+				_add_compat_patch(patches, "invalid_note_fields_sanitized")
+				continue
+			var arrow_type := int((raw_arrow as Dictionary).get("aType", -1))
+			if not _recognized_json_arrow_type(arrow_type):
+				continue
+			var raw_length := int((raw_arrow as Dictionary).get("length", 0))
+			if raw_length < 0:
+				_add_compat_patch(patches, "invalid_note_fields_sanitized")
+			last_line = maxi(last_line, line_no + maxi(0, raw_length))
+	return float(last_line) / float(maxi(1, ticks_per_beat))
+
+
+static func _json_duration_bpms(bpms: Array, last_playable_beat: float,
+		patches: Dictionary) -> Array:
+	var result: Array = bpms.duplicate(true)
+	while result.size() > 1:
+		var final_entry: Array = result[-1]
+		var final_beat := float(final_entry[0])
+		var final_bpm := float(final_entry[1])
+		if final_bpm >= JSON_TERMINAL_FREEZE_BPM_THRESHOLD:
+			break
+		var remaining_beat := last_playable_beat - final_beat
+		if remaining_beat <= 0.0:
+			result.pop_back()
+			_add_compat_patch(patches, "terminal_low_bpm_excluded_from_duration")
+			continue
+		var tail_seconds := remaining_beat * 60.0 / final_bpm
+		if tail_seconds < JSON_TERMINAL_FREEZE_ABNORMAL_SEC:
+			break
+		result.pop_back()
+		_add_compat_patch(patches, "terminal_low_bpm_excluded_from_duration")
+	return result if not result.is_empty() else [[0.0, 120.0]]
+
+
+static func _json_visual_pulses(data: Dictionary, ticks_per_beat: int,
+		timeline: Array, offset: float) -> Array:
+	var result: Array = []
+	var boards: Array = data.get("boards", [])
+	if boards.is_empty() or not boards[0] is Dictionary:
+		return result
+	for raw_item in (boards[0] as Dictionary).get("bpmSpeeds", []):
+		if not raw_item is Dictionary:
+			continue
+		var start_beat := float((raw_item as Dictionary).get("beats", NAN))
+		if is_nan(start_beat):
+			start_beat = float(int((raw_item as Dictionary).get("lineNo", 0))) \
+				/ float(maxi(1, ticks_per_beat))
+		var speed := float((raw_item as Dictionary).get("speed", 1.0))
+		var length := float((raw_item as Dictionary).get("length", 0.0))
+		if not is_finite(start_beat) or not is_finite(speed) or speed <= 8.0:
+			continue
+		if not is_finite(length) or length <= 0.000001:
+			length = 0.125
+		var end_beat := start_beat + maxf(0.03125, length)
+		var start_sec := beat_to_sec(start_beat, timeline) - offset
+		var end_sec := beat_to_sec(end_beat, timeline) - offset
+		if not is_finite(start_sec) or not is_finite(end_sec):
+			continue
+		if end_sec <= start_sec + 0.000001:
+			end_sec = start_sec + 0.05
+		var intensity := clampf(log(maxf(1.0, speed)) / log(10.0) / 3.0, 0.15, 1.0)
+		result.append({"start_sec": start_sec, "end_sec": end_sec,
+			"intensity": intensity, "speed": speed})
+	return result
+
+
+static func _json_fake_render_window(start_beat: float, end_beat: float,
+		bpms: Array, timeline: Array, offset: float) -> Vector2:
+	var extreme_start := NAN
+	var extreme_end := NAN
+	for i in bpms.size():
+		var entry: Array = bpms[i]
+		if float(entry[1]) < JSON_EXTREME_VISUAL_BPM_THRESHOLD:
+			continue
+		var segment_start := float(entry[0])
+		var segment_end := float(bpms[i + 1][0]) if i + 1 < bpms.size() else segment_start + 1.0
+		if segment_start <= start_beat and start_beat < segment_end:
+			extreme_start = segment_start
+			extreme_end = maxf(segment_end, segment_start + 0.03125)
+			break
+	if is_nan(extreme_start):
+		var start_sec := beat_to_sec(start_beat, timeline) - offset
+		var end_sec := beat_to_sec(end_beat, timeline) - offset
+		return Vector2(start_sec, maxf(start_sec, end_sec))
+	var window_start := beat_to_sec(maxf(0.0, extreme_start - 1.0), timeline) - offset + 0.06
+	var normalized_start := clampf((start_beat - extreme_start) /
+		maxf(0.000001, extreme_end - extreme_start), 0.0, 1.0)
+	var normalized_end := clampf((end_beat - extreme_start) /
+		maxf(0.000001, extreme_end - extreme_start), normalized_start, 1.0)
+	var window_duration := 1.4
+	return Vector2(window_start + normalized_start * window_duration,
+		window_start + normalized_end * window_duration)
+
+
 static func _json_mode_text(data: Dictionary) -> String:
 	var values := PackedStringArray()
 	for node in [data, data.get("scoreInfo", {})]:
@@ -498,10 +671,15 @@ static func json_mode_info(json_path: String) -> Dictionary:
 
 
 static func build_json_events(json_path: String, _prefer_double := false) -> Dictionary:
+	var default_bpms := [[0.0, 120.0]]
+	var default_timeline := build_timeline(default_bpms)
 	var empty := {
-		"events": [], "hand_events": [], "offset": 0.0, "duration": 0.0,
-		"columns": 5, "charttype": "json-single", "bpms": [[0.0, 120.0]],
-		"timeline": build_timeline([[0.0, 120.0]]), "error": "",
+		"events": [], "hand_events": [], "fake_events": [],
+		"visual_pulses": [], "offset": 0.0, "duration": 0.0,
+		"columns": 5, "charttype": "json-single", "bpms": default_bpms,
+		"timeline": default_timeline, "duration_timeline": default_timeline,
+		"ticks_per_beat": JSON_DEFAULT_TICKS_PER_BEAT,
+		"compat_patches": [], "error": "",
 	}
 	if not FileAccess.file_exists(json_path):
 		empty["error"] = "读取失败"
@@ -511,77 +689,113 @@ static func build_json_events(json_path: String, _prefer_double := false) -> Dic
 		empty["error"] = "JSON 格式无效"
 		return empty
 	var data: Dictionary = parsed
+	var patches := {}
 	var score_info: Dictionary = data.get("scoreInfo", {})
 	var offset := float(score_info.get("offset", data.get("offset", 0.0)))
+	if not is_finite(offset):
+		offset = 0.0
+		_add_compat_patch(patches, "invalid_offset_defaulted")
 	var ticks_per_beat := maxi(1, _json_tick_per_beat(data))
-	var bpms: Array = []
-	for raw_bpm in data.get("bpms", []):
-		if not raw_bpm is Dictionary:
-			continue
-		var bpm := float(raw_bpm.get("bpmVal", raw_bpm.get("bpm", 0.0)))
-		if bpm <= 0.0:
-			continue
-		var line_no := int(raw_bpm.get("lineNo", raw_bpm.get("line", 0)))
-		bpms.append([float(line_no) / float(ticks_per_beat), bpm])
-	if bpms.is_empty():
-		bpms = [[0.0, 120.0]]
-	else:
-		bpms.sort_custom(func(a, b): return float(a[0]) < float(b[0]))
-		if float(bpms[0][0]) > 0.0:
-			bpms.push_front([0.0, float(bpms[0][1])])
+	var bpms := _normalize_json_bpms(data, ticks_per_beat, patches)
 	var timeline := build_timeline(bpms)
+	var last_playable_beat := _json_last_playable_beat(data, ticks_per_beat, patches)
+	var duration_bpms := _json_duration_bpms(bpms, last_playable_beat, patches)
+	var duration_timeline := build_timeline(duration_bpms)
 	var events: Array = []
 	var hand_events: Array = []
-	var max_sec := 0.0
+	var fake_events: Array = []
+	var max_duration_sec := 0.0
 	var has_player2 := false
 	var boards: Array = data.get("boards", [])
 	if boards.is_empty() or not boards[0] is Dictionary:
 		empty["offset"] = offset
 		empty["bpms"] = bpms
 		empty["timeline"] = timeline
+		empty["duration_timeline"] = duration_timeline
+		empty["compat_patches"] = _compat_patch_list(patches)
 		empty["error"] = "JSON 缺少 boards"
 		return empty
 	var foot_map := {1: 0, 2: 1, 4: 2, 6: 3, 7: 4}
 	var hand_map := {0: "ll", 3: "tt", 5: "bb", 8: "rr"}
 	for raw_line in (boards[0] as Dictionary).get("lineDatas", []):
 		if not raw_line is Dictionary:
+			_add_compat_patch(patches, "invalid_note_fields_sanitized")
 			continue
-		var line_no := int(raw_line.get("lineNo", 0))
+		var line_no := int((raw_line as Dictionary).get("lineNo", 0))
+		if line_no < 0:
+			_add_compat_patch(patches, "invalid_note_fields_sanitized")
+			continue
 		var start_beat := float(line_no) / float(ticks_per_beat)
-		for raw_arrow in raw_line.get("arrows", []):
-			if not raw_arrow is Dictionary or bool(raw_arrow.get("isFaked", false)):
+		for raw_arrow in (raw_line as Dictionary).get("arrows", []):
+			if not raw_arrow is Dictionary:
+				_add_compat_patch(patches, "invalid_note_fields_sanitized")
 				continue
-			var arrow_type := int(raw_arrow.get("aType", -1))
-			var player := clampi(int(raw_arrow.get("player", 1)), 1, 2)
+			var arrow_type := int((raw_arrow as Dictionary).get("aType", -1))
+			if not foot_map.has(arrow_type) and not hand_map.has(arrow_type):
+				continue
+			var raw_player := int((raw_arrow as Dictionary).get("player", 1))
+			var player := clampi(raw_player, 1, 2)
+			var raw_length := int((raw_arrow as Dictionary).get("length", 0))
+			var length_lines := maxi(0, raw_length)
+			if raw_player != player or raw_length < 0:
+				_add_compat_patch(patches, "invalid_note_fields_sanitized")
 			has_player2 = has_player2 or player == 2
-			var length_lines := maxi(0, int(raw_arrow.get("length", 0)))
 			var end_beat := start_beat + float(length_lines) / float(ticks_per_beat)
 			var start_sec := beat_to_sec(start_beat, timeline) - offset
 			var end_sec := beat_to_sec(end_beat, timeline) - offset
-			var event_type := "hold" if length_lines > 0 else "tap"
-			if foot_map.has(arrow_type):
-				var track := int(foot_map[arrow_type]) + (5 if player == 2 else 0)
-				events.append({"track": track, "start_sec": start_sec, "end_sec": end_sec,
-					"start_beat": start_beat, "end_beat": end_beat,
-					"type": event_type, "player": player})
-			elif hand_map.has(arrow_type):
-				hand_events.append({"dir": str(hand_map[arrow_type]),
-					"start_sec": start_sec, "end_sec": end_sec,
-					"start_beat": start_beat, "end_beat": end_beat,
-					"type": event_type, "player": player})
-			else:
+			var duration_end_sec := beat_to_sec(end_beat, duration_timeline) - offset
+			if not is_finite(start_sec) or not is_finite(end_sec) \
+					or not is_finite(duration_end_sec):
+				_add_compat_patch(patches, "non_finite_event_ignored")
 				continue
-			max_sec = maxf(max_sec, end_sec)
+			if end_sec < start_sec:
+				var swap_sec := start_sec
+				start_sec = end_sec
+				end_sec = swap_sec
+				var swap_beat := start_beat
+				start_beat = end_beat
+				end_beat = swap_beat
+				_add_compat_patch(patches, "reversed_event_range_repaired")
+			var event_type := "hold" if length_lines > 0 else "tap"
+			var is_fake := bool((raw_arrow as Dictionary).get("isFaked", false))
+			var event := {"start_sec": start_sec, "end_sec": end_sec,
+				"start_beat": start_beat, "end_beat": end_beat,
+				"type": event_type, "player": player}
+			if foot_map.has(arrow_type):
+				event["track"] = int(foot_map[arrow_type]) + (5 if player == 2 else 0)
+			else:
+				event["dir"] = str(hand_map[arrow_type])
+			if is_fake:
+				var render_window := _json_fake_render_window(start_beat, end_beat,
+					bpms, timeline, offset)
+				event["render_only"] = true
+				event["render_start_sec"] = render_window.x
+				event["render_end_sec"] = maxf(render_window.x, render_window.y)
+				fake_events.append(event)
+				_add_compat_patch(patches, "fake_notes_excluded_from_judgement")
+			elif foot_map.has(arrow_type):
+				events.append(event)
+			else:
+				hand_events.append(event)
+			max_duration_sec = maxf(max_duration_sec, duration_end_sec)
 	events.sort_custom(func(a, b): return float(a["start_sec"]) < float(b["start_sec"]))
 	hand_events.sort_custom(func(a, b): return float(a["start_sec"]) < float(b["start_sec"]))
+	fake_events.sort_custom(func(a, b):
+		return float(a.get("render_start_sec", a.get("start_sec", 0.0))) \
+			< float(b.get("render_start_sec", b.get("start_sec", 0.0))))
 	var mode_info := json_mode_info_from_data(data)
 	var columns := int(mode_info.get("columns", 10 if has_player2 else 5))
 	return {
-		"events": events, "hand_events": hand_events, "offset": offset,
-		"duration": maxf(0.0, max_sec + 2.0), "columns": columns,
-		"charttype": str(mode_info.get("charttype", "json-double" if columns >= 10 else "json-single")),
+		"events": events, "hand_events": hand_events, "fake_events": fake_events,
+		"visual_pulses": _json_visual_pulses(data, ticks_per_beat, timeline, offset),
+		"offset": offset, "duration": maxf(0.0, max_duration_sec + 2.0),
+		"columns": columns,
+		"charttype": str(mode_info.get("charttype",
+			"json-double" if columns >= 10 else "json-single")),
 		"bpms": bpms, "timeline": timeline,
+		"duration_timeline": duration_timeline,
 		"ticks_per_beat": ticks_per_beat,
+		"compat_patches": _compat_patch_list(patches),
 		"error": "" if not events.is_empty() else "JSON 没有可玩的脚键音符",
 	}
 

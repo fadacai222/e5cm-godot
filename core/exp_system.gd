@@ -25,6 +25,18 @@ static func default_progress() -> Dictionary:
 	return {"等级": 1, "经验": 0.0, "累计歌曲": 0, "累计首数": 0}
 
 
+## 资料页长期进度：等级占主进度，本级经验补充当前等级的小数部分。
+## 例如 Lv.19 / 0 EXP 仍显示约 26%，避免高等级玩家看到一条完全空的进度条。
+static func overall_progress_ratio(progress: Dictionary) -> float:
+	var normalized := normalize_progress(progress)
+	var level := int(normalized.get("等级", 1))
+	if level >= MAX_LEVEL:
+		return 1.0
+	var need := float(maxi(1, exp_to_next_level(level)))
+	var current_level_ratio := clampf(float(normalized.get("经验", 0.0)) / need, 0.0, 1.0)
+	return clampf((float(level - 1) + current_level_ratio) / float(MAX_LEVEL - 1), 0.0, 1.0)
+
+
 ## 原版段位：花式/竞速最高等级每 10 级升一段，1~70 对应 1~7 段。
 static func rank_index_for_level(level: int) -> int:
 	return clampi((clampi(level, 1, MAX_LEVEL) - 1) / 10 + 1, 1, 7)

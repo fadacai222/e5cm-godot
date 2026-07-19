@@ -75,6 +75,16 @@ func _initialize() -> void:
 		"songs=%d scans=%d" % [added.size(), library.scan_song_dir_calls_for_test()])
 
 	OS.delay_msec(1100)
+	_write_song(folder_a, "歌曲 A 已修改")
+	library.clear_memory_cache_for_test()
+	library.reset_scan_song_dir_calls_for_test()
+	var modified: Array = library.get_songs("DIY", submode)
+	var modified_names := modified.map(func(song): return str((song as Dictionary).get("name", "")))
+	_check(modified_names.has("歌曲 A 已修改") and library.scan_song_dir_calls_for_test() == 1,
+		"原地修改谱面文件时只重新解析对应歌曲文件夹",
+		"names=%s scans=%d" % [modified_names, library.scan_song_dir_calls_for_test()])
+
+	OS.delay_msec(1100)
 	_remove_song(folder_b)
 	library.clear_memory_cache_for_test()
 	library.reset_scan_song_dir_calls_for_test()

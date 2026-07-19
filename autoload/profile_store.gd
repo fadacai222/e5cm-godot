@@ -1,5 +1,8 @@
 extends Node
 ## 玩家档案（autoload: ProfileStore）
+
+signal profile_changed
+signal progress_changed(mode_key: String, progress: Dictionary, preview: bool)
 ## 对应旧项目 userdata/profile/个人资料.json（结构保持一致，便于旧存档直接迁移）
 ## + 歌曲记录（旧 sqlite 歌曲记录作用域 -> user://records.json）
 ## + 收藏夹（旧 sqlite 收藏夹作用域 -> user://favorites.json）
@@ -13,10 +16,13 @@ var persist_enabled := true
 var profile := {}
 var records := {}     # "songs/竞速/club/xxx/yyy.sm" -> {最高分, 游玩次数, 歌名, sm路径}
 var favorites := []   # Array[String] sm相对路径
+var _mode_progress_previews := {} # 仅内存：前两把缓存经验的即时显示，不提前写入正式等级
 
 
 func _ready() -> void:
+	_mode_progress_previews.clear()
 	profile = _load_json(profile_path, _default_profile())
+	refresh_rank_cache()
 	records = _load_json(RECORDS_PATH, {})
 	var fav = _load_json(FAVORITES_PATH, [])
 	favorites = fav if fav is Array else []
@@ -46,22 +52,62 @@ func _default_profile() -> Dictionary:
 
 
 ## 模式键：花式/竞速/diy（DIY 大模式统一小写 diy，与旧版一致）
+func _progress_key(mode_key: String) -> String:
+	return mode_key.to_lower() if mode_key.to_upper() == "DIY" else mode_key
+
+
 func get_mode_progress(mode_key: String) -> Dictionary:
-	var key := mode_key.to_lower() if mode_key.to_upper() == "DIY" else mode_key
+	var key := _progress_key(mode_key)
 	var progress = profile.get("进度", {}).get(key, null)
 	if progress == null:
 		progress = ExpSystem.default_progress()
 	return ExpSystem.normalize_progress(progress, int(profile.get("进度", {}).get("经验版本", 1)))
 
 
+func get_mode_progress_for_display(mode_key: String) -> Dictionary:
+	var key := _progress_key(mode_key)
+	if _mode_progress_previews.has(key):
+		return (_mode_progress_previews[key] as Dictionary).duplicate(true)
+	return get_mode_progress(key)
+
+
+func set_mode_progress_preview(mode_key: String, progress: Dictionary) -> void:
+	var key := _progress_key(mode_key)
+	var normalized := ExpSystem.normalize_progress(progress)
+	_mode_progress_previews[key] = normalized
+	progress_changed.emit(key, normalized.duplicate(true), true)
+	profile_changed.emit()
+
+
+func clear_mode_progress_preview(mode_key := "") -> void:
+	if mode_key.is_empty():
+		var keys := _mode_progress_previews.keys().duplicate()
+		_mode_progress_previews.clear()
+		for raw_key in keys:
+			var key := str(raw_key)
+			progress_changed.emit(key, get_mode_progress(key), false)
+		if not keys.is_empty():
+			profile_changed.emit()
+		return
+	var key := _progress_key(mode_key)
+	if not _mode_progress_previews.erase(key):
+		return
+	progress_changed.emit(key, get_mode_progress(key), false)
+	profile_changed.emit()
+
+
 func set_mode_progress(mode_key: String, progress: Dictionary) -> void:
-	var key := mode_key.to_lower() if mode_key.to_upper() == "DIY" else mode_key
+	var key := _progress_key(mode_key)
 	if not profile.has("进度"):
 		profile["进度"] = {}
-	profile["进度"][key] = progress
+	var normalized := ExpSystem.normalize_progress(progress)
+	profile["进度"][key] = normalized
 	profile["进度"]["经验版本"] = ExpSystem.EXP_DATA_VERSION
+	_mode_progress_previews.erase(key)
 	profile["进度"]["段位"] = str(get_rank_index())
 	save_profile()
+	progress_changed.emit(key, normalized.duplicate(true), false)
+	profile_changed.emit()
 
 
 func get_highest_competitive_level() -> int:
@@ -69,16 +115,59 @@ func get_highest_competitive_level() -> int:
 		int(get_mode_progress("竞速").get("等级", 1)))
 
 
+func get_highest_competitive_level_for_display() -> int:
+	return maxi(int(get_mode_progress_for_display("花式").get("等级", 1)),
+		int(get_mode_progress_for_display("竞速").get("等级", 1)))
+
+
+## 玩家总段位取花式、竞速、DIY 三个大模式中的最高等级。
+## 保留 competitive 接口给旧 UI/统计使用，但段位不再排除 DIY 玩家。
+func get_highest_mode_level() -> int:
+	return maxi(get_highest_competitive_level(),
+		int(get_mode_progress("DIY").get("等级", 1)))
+
+
+func get_highest_mode_level_for_display() -> int:
+	return maxi(get_highest_competitive_level_for_display(),
+		int(get_mode_progress_for_display("DIY").get("等级", 1)))
+
+
 func get_rank_index() -> int:
-	return ExpSystem.rank_index_for_level(get_highest_competitive_level())
+	return ExpSystem.rank_index_for_level(get_highest_mode_level())
+
+
+func get_rank_index_for_display() -> int:
+	return ExpSystem.rank_index_for_level(get_highest_mode_level_for_display())
 
 
 func get_rank_asset_path() -> String:
 	return ExpSystem.rank_asset_path(get_rank_index())
 
 
+func get_rank_asset_path_for_display() -> String:
+	return ExpSystem.rank_asset_path(get_rank_index_for_display())
+
+
 func get_rank_label() -> String:
 	return "%d段" % get_rank_index()
+
+
+func get_rank_label_for_display() -> String:
+	return "%d段" % get_rank_index_for_display()
+
+
+## 修复旧存档只按花式/竞速写入的段位缓存。UI 不依赖这个字段，
+## 但保持存档内部一致，避免后续工具或旧兼容代码继续读到一段。
+func refresh_rank_cache(save_if_changed := true) -> bool:
+	if not profile.has("进度") or not profile["进度"] is Dictionary:
+		profile["进度"] = {}
+	var expected := str(get_rank_index())
+	if str(profile["进度"].get("段位", "")) == expected:
+		return false
+	profile["进度"]["段位"] = expected
+	if save_if_changed:
+		save_profile()
+	return true
 
 
 ## 更新歌曲最高分（对应旧 core/歌曲记录.py::更新歌曲最高分）
@@ -127,6 +216,7 @@ func set_nickname(value: String) -> bool:
 		return false
 	profile["昵称"] = nickname.substr(0, 16)
 	save_profile()
+	profile_changed.emit()
 	return true
 
 
@@ -141,6 +231,7 @@ func set_avatar_file(path: String) -> bool:
 		return false
 	profile["头像文件"] = normalized
 	save_profile()
+	profile_changed.emit()
 	return true
 
 

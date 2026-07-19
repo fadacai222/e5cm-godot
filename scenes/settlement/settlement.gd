@@ -188,8 +188,14 @@ func _persist_results() -> void:
 		mode, progress, int(payload.get("当前关卡", 1)), grade,
 		int(payload.get("cool数", 0)), int(payload.get("good数", 0)),
 		int(payload.get("miss数", 0)))
-	ProfileStore.set_mode_progress(mode, _exp_result["模式进度"])
-	ProfileStore.save_profile()
+	if bool(_exp_result.get("预览缓存", false)):
+		# 前两把仍按原版规则不写正式等级，但个人中心要实时显示已经缓存的累计经验。
+		var preview_deposit: Dictionary = _exp_result.get("经验结算", {})
+		ProfileStore.set_mode_progress_preview(mode,
+			preview_deposit.get("模式进度", progress))
+		ProfileStore.save_profile()
+	else:
+		ProfileStore.set_mode_progress(mode, _exp_result["模式进度"])
 
 
 func _process(delta: float) -> void:
@@ -359,10 +365,10 @@ func _build_exp_progress(window: Control) -> void:
 	var style_progress := deposit if active_mode == "花式" else ProfileStore.get_mode_progress("花式")
 	var speed_progress := deposit if active_mode == "竞速" else ProfileStore.get_mode_progress("竞速")
 	_build_mode_exp_row(window, "Style", "花式", style_progress,
-		Rect2(37.2, 136.8, 100.8, 38.4), Rect2(156.0, 140.4, 397.2, 27.6),
+		Rect2(37.2, 136.8, 100.8, 38.4), Rect2(158.4, 141.6, 483.6, 27.6),
 		Rect2(158.4, 141.6, 483.6, 27.6), Rect2(652.8, 136.8, 132.0, 40.8))
 	_build_mode_exp_row(window, "Speed", "竞速", speed_progress,
-		Rect2(38.4, 188.4, 96.0, 38.4), Rect2(159.6, 195.6, 400.8, 27.6),
+		Rect2(38.4, 188.4, 96.0, 38.4), Rect2(158.4, 195.6, 483.6, 27.6),
 		Rect2(158.4, 195.6, 483.6, 27.6), Rect2(650.4, 188.4, 132.0, 40.8))
 	_build_rank_icon(window)
 	if not bool(_exp_result.get("预览缓存", false)) \

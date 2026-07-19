@@ -2,6 +2,8 @@
 .godot/
 *.import
 *.tmp
+/NUL
+addons/ffmpeg/**/~libgdffmpeg*
 
 # Release/build output
 /release/

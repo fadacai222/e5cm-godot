@@ -1,0 +1,2 @@
+# Songs are raw external content, not Godot import resources.
+# Keep this marker even when the real song library is moved to ../e5cm-content/songs.

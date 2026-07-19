@@ -15,6 +15,10 @@ from tools.parity_compare.original_driver import canonical_state
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@unittest.skipUnless(
+    (ROOT / "parity" / "state_manifest.json").is_file(),
+    "parity 视觉基准已从精简源码包归档",
+)
 class ParityManifestTests(unittest.TestCase):
     def test_shared_manifest_and_six_fixture_types_are_valid(self):
         manifest = load_and_validate_manifest(ROOT / "parity" / "state_manifest.json")

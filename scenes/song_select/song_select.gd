@@ -28,6 +28,7 @@ const TOP_BADGE_GAP := 13.0
 const TOP_BADGE_HEIGHT_RATIO := 0.45
 const TOP_BADGE_SCALE := 1.10
 const TOP_BADGE_STRETCH_X := 1.30
+const SEARCH_LANGUAGE_OPTIONS := ["全部", "中文", "日文", "韩文", "英文"]
 
 var songs: Array = []
 var page := 0
@@ -36,6 +37,7 @@ var favorites_mode := false
 var filter_style := ""
 var filter_star := 0
 var search_keyword := ""
+var search_language := "全部"
 
 var _cards: Array = []
 var _source_songs: Array = []
@@ -63,8 +65,18 @@ var _search_progress_percent: Label
 var _search_submit_button: Button
 var _search_clear_button: Button
 var _search_cancel_button: Button
+var _search_language_buttons := {}
 var _search_running := false
 var _search_generation := 0
+var _preview_generation := 0
+var _preview_path := ""
+var _top_profile_badge: Panel
+var _top_profile_avatar: TextureRect
+var _top_profile_name: Label
+var _top_profile_rank: Label
+var _top_profile_level: Label
+var _top_profile_player_tag: Label
+var _top_profile_status_lights: Array[Label] = []
 
 var _card_frame: Texture2D
 var _star_tex: Texture2D
@@ -90,6 +102,9 @@ func _ready() -> void:
 
 	var top_bar := $TopBar
 	_build_mode_badges(top_bar)
+	_build_top_profile_badge(top_bar)
+	if not ProfileStore.profile_changed.is_connected(_refresh_top_profile_badge):
+		ProfileStore.profile_changed.connect(_refresh_top_profile_badge)
 	_setup_bottom_actions()
 	_build_loading_overlay()
 	_build_search_overlay()
@@ -111,6 +126,7 @@ func _ready() -> void:
 	add_child(filter_panel)
 
 	esc_menu = EscMenu.new(false)
+	esc_menu.couple_mode = GameState.player_count >= 2
 	add_child(esc_menu)
 	if not SongLibrary.scan_progress.is_connected(_on_song_scan_progress):
 		SongLibrary.scan_progress.connect(_on_song_scan_progress)
@@ -123,6 +139,9 @@ func _ready() -> void:
 		filter_style = str(restore.get("filter_style", "")).strip_edges()
 		filter_star = clampi(int(restore.get("filter_star", 0)), 0, 20)
 		search_keyword = str(restore.get("search_keyword", "")).strip_edges()
+		search_language = str(restore.get("search_language", "全部"))
+		if search_language not in SEARCH_LANGUAGE_OPTIONS:
+			search_language = "全部"
 	await _reload_songs_async()
 	if restore is Dictionary and not restore.is_empty():
 		page = clampi(int(restore.get("page", 0)), 0, maxi(0, _page_count() - 1))
@@ -273,10 +292,14 @@ func _set_bottom_label(button: TextureButton, text: String) -> void:
 		label.text = text
 
 
+func _search_filter_active() -> bool:
+	return not search_keyword.is_empty() or search_language != "全部"
+
+
 func _refresh_bottom_labels() -> void:
 	_set_bottom_label($FilterButton, "筛选中" if not _filter_summary().is_empty() else "歌曲分类")
 	_set_bottom_label($FavoriteButton, "退出收藏夹" if favorites_mode else "收藏夹")
-	_set_bottom_label($SearchButton, "清除搜索" if not search_keyword.is_empty() else "搜索歌曲")
+	_set_bottom_label($SearchButton, "清除搜索" if _search_filter_active() else "搜索歌曲")
 	_set_bottom_label($JoinPlayerButton, "2P加入" if GameState.player_count == 1 else "1P加入")
 
 
@@ -312,6 +335,7 @@ func _on_slot_all() -> void:
 	filter_style = ""
 	filter_star = 0
 	search_keyword = ""
+	search_language = "全部"
 	page = 0
 	selected = 0
 	_reload_songs()
@@ -342,6 +366,7 @@ func _reload_songs() -> void:
 func _apply_song_filters() -> void:
 	var source := _current_filter_source()
 	var filtered := SongLibrary.filter_songs(source, filter_style, filter_star)
+	filtered = SongLibrary.filter_songs_by_title_language(filtered, search_language)
 	songs = SongLibrary.search_songs(filtered, search_keyword)
 
 
@@ -373,6 +398,8 @@ func _filter_summary() -> String:
 		parts.append(filter_style)
 	if filter_star > 0:
 		parts.append("%d星" % filter_star)
+	if search_language != "全部":
+		parts.append("%s歌名" % search_language)
 	if not search_keyword.is_empty():
 		parts.append("搜索“%s”" % search_keyword)
 	return " / ".join(parts)
@@ -391,17 +418,17 @@ func _build_loading_overlay() -> void:
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_loading_overlay.add_child(dim)
 	var panel := Panel.new()
+	panel.name = "LoadingPanel"
 	panel.position = Vector2(490, 405)
 	panel.size = Vector2(940, 270)
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.02, 0.055, 0.10, 0.98)
-	style.border_color = Color(0.0, 0.92, 1.0, 0.92)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(14)
-	style.shadow_color = Color(0.74, 0.03, 0.92, 0.48)
-	style.shadow_size = 28
-	panel.add_theme_stylebox_override("panel", style)
+	panel.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
+		Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0))
 	_loading_overlay.add_child(panel)
+	var frame := UiKit.hud_frame(panel, Rect2(Vector2.ZERO, panel.size),
+		"OriginalLoadingHudFrame", E5OriginalTheme.CYAN, E5OriginalTheme.MAGENTA,
+		96.0, true, 22.0)
+	frame.fill_color = Color(0.010, 0.052, 0.13, 0.98)
+	frame.header_color = Color(0.025, 0.18, 0.30, 0.72)
 	var title := UiKit.label(panel, "COMMUNITY LIBRARY  /  曲库载入", 34,
 		Vector2(46, 34), Color(0.80, 0.98, 1.0), 4)
 	title.size = Vector2(700, 52)
@@ -416,6 +443,7 @@ func _build_loading_overlay() -> void:
 	_loading_bar.value = 0
 	_loading_bar.show_percentage = false
 	_loading_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	UiKit.skin_arcade_progress(_loading_bar)
 	panel.add_child(_loading_bar)
 	_loading_percent = UiKit.label(panel, "0%", 28, Vector2(812, 151),
 		Color(1.0, 0.48, 0.92), 3)
@@ -436,6 +464,9 @@ func _show_loading_overlay(value: bool) -> void:
 		_loading_percent.text = "0%"
 		_loading_status.text = "正在准备曲库…"
 		move_child(_loading_overlay, get_child_count() - 1)
+		var loading_panel := _loading_overlay.get_node_or_null("LoadingPanel") as Control
+		if loading_panel != null:
+			UiKit.animate_arcade_in(loading_panel, Vector2(0, 16), 0.18)
 
 
 func _on_song_scan_progress(mode: String, submode: String, current: int, total: int,
@@ -456,112 +487,169 @@ func _build_search_overlay() -> void:
 	_search_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_search_overlay)
 	var dim := ColorRect.new()
+	dim.name = "SearchInputBlocker"
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.color = Color(0.0, 0.0, 0.03, 0.78)
+	dim.color = Color(0.0, 0.01, 0.055, 0.84)
+	dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	_search_overlay.add_child(dim)
+
 	var panel := Panel.new()
-	panel.position = Vector2(535, 315)
-	panel.size = Vector2(850, 440)
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.018, 0.045, 0.09, 0.98)
-	style.border_color = Color(0.95, 0.12, 0.78, 0.95)
-	style.set_border_width_all(2)
-	style.set_corner_radius_all(16)
-	style.shadow_color = Color(0.0, 0.8, 1.0, 0.42)
-	style.shadow_size = 26
-	panel.add_theme_stylebox_override("panel", style)
+	panel.name = "SearchPanel"
+	panel.position = Vector2(490, 250)
+	panel.size = Vector2(940, 580)
+	var transparent := StyleBoxFlat.new()
+	transparent.bg_color = Color(0, 0, 0, 0)
+	transparent.set_border_width_all(0)
+	panel.add_theme_stylebox_override("panel", transparent)
 	_search_overlay.add_child(panel)
-	var title := UiKit.label(panel, "搜索歌曲 / SEARCH", 38, Vector2(44, 34),
-		Color(0.82, 0.98, 1.0), 4)
-	title.size = Vector2(700, 55)
-	var subtitle := UiKit.label(panel, "输入歌名或歌手，例如：凤凰传奇", 21,
-		Vector2(46, 91), Color(0.68, 0.78, 0.92), 2)
-	subtitle.size = Vector2(720, 38)
+	var frame := UiKit.hud_frame(panel, Rect2(Vector2.ZERO, panel.size),
+		"OriginalSearchHudFrame", E5OriginalTheme.CYAN, E5OriginalTheme.MAGENTA,
+		122.0, true, 24.0)
+	frame.fill_color = Color(0.010, 0.052, 0.135, 0.98)
+	frame.header_color = Color(0.025, 0.19, 0.32, 0.74)
+
+	var tag := UiKit.label(panel, "MUSIC DATABASE  /  KEYWORD SEARCH", 15,
+		Vector2(48, 17), E5OriginalTheme.CYAN_SOFT, 0)
+	tag.size = Vector2(500, 25)
+	var title := UiKit.label(panel, "搜索歌曲", 38, Vector2(46, 43),
+		E5OriginalTheme.TEXT, 4)
+	title.size = Vector2(260, 58)
+	var english := UiKit.label(panel, "SEARCH", 20, Vector2(260, 57),
+		E5OriginalTheme.MAGENTA, 0)
+	english.size = Vector2(170, 34)
+	var subtitle := UiKit.label(panel, "支持歌名、歌手与歌名语言分类", 17,
+		Vector2(530, 57), E5OriginalTheme.MUTED, 0)
+	subtitle.size = Vector2(350, 32)
+	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	E5OriginalTheme.add_rule(panel, Rect2(46, 124, 848, 2))
+
 	_search_input = LineEdit.new()
 	_search_input.name = "SearchInput"
-	_search_input.position = Vector2(46, 142)
-	_search_input.size = Vector2(758, 58)
-	_search_input.placeholder_text = "歌名 / 歌手关键词"
+	_search_input.position = Vector2(48, 145)
+	_search_input.size = Vector2(844, 62)
+	_search_input.placeholder_text = "输入歌名 / 歌手关键词"
 	_search_input.clear_button_enabled = true
-	_search_input.add_theme_font_size_override("font_size", 25)
+	UiKit.skin_arcade_input(_search_input, 25)
 	_search_input.text_submitted.connect(_submit_search)
 	panel.add_child(_search_input)
-	_search_progress_status = UiKit.label(panel, "等待输入关键词", 17, Vector2(46, 214),
-		Color(0.64, 0.78, 0.94), 1)
+
+	var language_label := UiKit.label(panel, "LANGUAGE  /  歌名语言", 16,
+		Vector2(48, 226), E5OriginalTheme.CYAN_SOFT, 0)
+	language_label.size = Vector2(220, 28)
+	_search_language_buttons.clear()
+	var language_x := 270.0
+	for option in SEARCH_LANGUAGE_OPTIONS:
+		var button := Button.new()
+		button.name = "SearchLanguage%s" % option
+		button.text = "韩语" if option == "韩文" else option
+		button.toggle_mode = true
+		button.position = Vector2(language_x, 218)
+		button.size = Vector2(120, 44)
+		button.pressed.connect(_set_search_language.bind(option))
+		panel.add_child(button)
+		_search_language_buttons[option] = button
+		language_x += 124.0
+	_refresh_search_language_buttons()
+
+	_search_progress_status = UiKit.label(panel, "等待输入关键词或选择语言", 16,
+		Vector2(48, 286), E5OriginalTheme.MUTED, 0)
 	_search_progress_status.name = "SearchProgressStatus"
-	_search_progress_status.size = Vector2(610, 30)
+	_search_progress_status.size = Vector2(680, 30)
 	_search_progress_bar = ProgressBar.new()
 	_search_progress_bar.name = "SearchProgressBar"
-	_search_progress_bar.position = Vector2(46, 248)
-	_search_progress_bar.size = Vector2(674, 24)
+	_search_progress_bar.position = Vector2(48, 320)
+	_search_progress_bar.size = Vector2(748, 25)
 	_search_progress_bar.min_value = 0.0
 	_search_progress_bar.max_value = 100.0
 	_search_progress_bar.value = 0.0
-	_search_progress_bar.show_percentage = false
 	_search_progress_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var search_bar_bg := StyleBoxFlat.new()
-	search_bar_bg.bg_color = Color(0.01, 0.02, 0.07, 0.96)
-	search_bar_bg.border_color = Color(0.10, 0.52, 0.78, 0.78)
-	search_bar_bg.set_border_width_all(2)
-	search_bar_bg.set_corner_radius_all(9)
-	var search_bar_fill := StyleBoxFlat.new()
-	search_bar_fill.bg_color = Color(0.08, 0.90, 1.0)
-	search_bar_fill.border_color = Color(1.0, 0.12, 0.72, 0.92)
-	search_bar_fill.set_border_width_all(2)
-	search_bar_fill.set_corner_radius_all(8)
-	search_bar_fill.shadow_color = Color(0.16, 0.78, 1.0, 0.62)
-	search_bar_fill.shadow_size = 9
-	_search_progress_bar.add_theme_stylebox_override("background", search_bar_bg)
-	_search_progress_bar.add_theme_stylebox_override("fill", search_bar_fill)
+	UiKit.skin_arcade_progress(_search_progress_bar)
 	panel.add_child(_search_progress_bar)
-	_search_progress_percent = UiKit.label(panel, "0%", 17, Vector2(728, 242),
-		Color(0.98, 0.36, 0.86), 2)
+	_search_progress_percent = UiKit.label(panel, "0%", 18, Vector2(810, 313),
+		E5OriginalTheme.GOLD, 0)
 	_search_progress_percent.name = "SearchProgressPercent"
-	_search_progress_percent.size = Vector2(76, 34)
+	_search_progress_percent.size = Vector2(82, 38)
 	_search_progress_percent.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+
 	_search_submit_button = Button.new()
 	_search_submit_button.name = "SearchSubmitButton"
-	_search_submit_button.text = "搜索并跳转"
-	_search_submit_button.position = Vector2(46, 302)
-	_search_submit_button.size = Vector2(250, 60)
-	_search_submit_button.add_theme_font_size_override("font_size", 23)
+	_search_submit_button.text = "CONFIRM  搜索并跳转"
+	_search_submit_button.position = Vector2(48, 382)
+	_search_submit_button.size = Vector2(350, 62)
+	UiKit.skin_arcade_button(_search_submit_button, true, false, 21)
 	_search_submit_button.pressed.connect(func(): _submit_search(_search_input.text))
 	panel.add_child(_search_submit_button)
 	_search_clear_button = Button.new()
 	_search_clear_button.name = "SearchClearButton"
-	_search_clear_button.text = "清除搜索"
-	_search_clear_button.position = Vector2(312, 302)
-	_search_clear_button.size = Vector2(210, 60)
-	_search_clear_button.add_theme_font_size_override("font_size", 23)
+	_search_clear_button.text = "RESET  清除搜索"
+	_search_clear_button.position = Vector2(414, 382)
+	_search_clear_button.size = Vector2(230, 62)
+	UiKit.skin_arcade_button(_search_clear_button, false, false, 20,
+		E5OriginalTheme.MAGENTA)
 	_search_clear_button.pressed.connect(_clear_search)
 	panel.add_child(_search_clear_button)
 	_search_cancel_button = Button.new()
 	_search_cancel_button.name = "SearchCancelButton"
-	_search_cancel_button.text = "取消"
-	_search_cancel_button.position = Vector2(538, 302)
-	_search_cancel_button.size = Vector2(266, 60)
-	_search_cancel_button.add_theme_font_size_override("font_size", 23)
+	_search_cancel_button.text = "BACK  取消"
+	_search_cancel_button.position = Vector2(660, 382)
+	_search_cancel_button.size = Vector2(232, 62)
+	UiKit.skin_arcade_button(_search_cancel_button, false, false, 20)
 	_search_cancel_button.pressed.connect(_cancel_or_close_search)
 	panel.add_child(_search_cancel_button)
-	_search_result_hint = UiKit.label(panel, "", 18, Vector2(46, 382),
-		Color(1.0, 0.72, 0.90), 1)
-	_search_result_hint.size = Vector2(758, 34)
+
+	_search_result_hint = UiKit.label(panel, "", 18, Vector2(48, 476),
+		E5OriginalTheme.MAGENTA, 0)
+	_search_result_hint.size = Vector2(844, 34)
+	var footer := UiKit.label(panel, "ENTER 确认    ESC 关闭    搜索结果自动跳到第一页首项", 14,
+		Vector2(48, 524), E5OriginalTheme.CYAN_SOFT, 0)
+	footer.size = Vector2(844, 28)
+	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_search_overlay.visible = false
 
 
+func _refresh_search_language_buttons() -> void:
+	for option in _search_language_buttons:
+		var button := _search_language_buttons[option] as Button
+		var selected_language := str(option) == search_language
+		button.set_pressed_no_signal(selected_language)
+		button.modulate = Color.WHITE
+		UiKit.skin_arcade_button(button, selected_language, false, 18,
+			E5OriginalTheme.MAGENTA if str(option) in ["日文", "韩文"] \
+			else E5OriginalTheme.CYAN)
+
+
+func _set_search_language(language: String) -> void:
+	if _search_running or language not in SEARCH_LANGUAGE_OPTIONS:
+		return
+	search_language = language
+	_refresh_search_language_buttons()
+	var filtered := SongLibrary.filter_songs(
+		_current_filter_source(), filter_style, filter_star)
+	filtered = SongLibrary.filter_songs_by_title_language(filtered, search_language)
+	var label := "全部语言" if search_language == "全部" else "%s歌名" % search_language
+	_search_result_hint.text = "%s共 %d 首，可不输入关键词直接筛选" % [label, filtered.size()]
+	_search_progress_status.text = "已选择%s分类" % label
+
+
 func _open_search() -> void:
-	if not search_keyword.is_empty():
+	if _search_filter_active():
 		_clear_search()
 		return
 	_search_input.text = search_keyword
-	_search_result_hint.text = "当前曲库共 %d 首可搜索" % _source_songs.size()
+	_refresh_search_language_buttons()
+	var language_source := SongLibrary.filter_songs_by_title_language(
+		_current_filter_source(), search_language)
+	_search_result_hint.text = "当前分类共 %d 首可搜索" % language_source.size()
 	_search_progress_bar.value = 0.0
 	_search_progress_percent.text = "0%"
-	_search_progress_status.text = "等待输入关键词"
+	_search_progress_status.text = "等待输入关键词或选择语言"
 	_search_cancel_button.text = "取消"
 	_set_search_controls_enabled(true)
 	_search_overlay.visible = true
 	move_child(_search_overlay, get_child_count() - 1)
+	var search_panel := _search_overlay.get_node_or_null("SearchPanel") as Control
+	if search_panel != null:
+		UiKit.animate_arcade_in(search_panel, Vector2(22, 0), 0.17)
 	_search_input.grab_focus()
 	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
 
@@ -590,6 +678,8 @@ func _set_search_controls_enabled(enabled: bool) -> void:
 		_search_submit_button.disabled = not enabled
 	if _search_clear_button != null:
 		_search_clear_button.disabled = not enabled
+	for raw_button in _search_language_buttons.values():
+		(raw_button as Button).disabled = not enabled
 
 
 func _search_cancelled(generation: int) -> bool:
@@ -608,6 +698,8 @@ func _on_song_search_progress(current: int, total: int, status: String) -> void:
 
 func _clear_search() -> void:
 	search_keyword = ""
+	search_language = "全部"
+	_refresh_search_language_buttons()
 	page = 0
 	selected = 0
 	_reload_songs()
@@ -620,7 +712,7 @@ func _submit_search(value: String) -> void:
 	if _search_running:
 		return
 	var keyword := value.strip_edges().substr(0, 64)
-	if keyword.is_empty():
+	if keyword.is_empty() and search_language == "全部":
 		_clear_search()
 		return
 	_search_running = true
@@ -633,6 +725,7 @@ func _submit_search(value: String) -> void:
 	_search_progress_status.text = "正在查询已建立的歌曲索引"
 	_search_result_hint.text = ""
 	var filtered := SongLibrary.filter_songs(_current_filter_source(), filter_style, filter_star)
+	filtered = SongLibrary.filter_songs_by_title_language(filtered, search_language)
 	var found: Array = await SongLibrary.search_songs_async(filtered, keyword, 8,
 		_search_cancelled.bind(generation))
 	if _search_cancelled(generation):
@@ -646,7 +739,9 @@ func _submit_search(value: String) -> void:
 	_search_cancel_button.text = "关闭"
 	_build_page()
 	_refresh_bottom_labels()
-	_search_result_hint.text = "找到 %d 首匹配歌曲" % songs.size()
+	var result_scope := "匹配歌曲" if search_language == "全部" \
+		else "%s歌名歌曲" % search_language
+	_search_result_hint.text = "找到 %d 首%s" % [songs.size(), result_scope]
 	_search_progress_status.text = "搜索完成"
 	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
 	_close_search()
@@ -709,6 +804,186 @@ func _build_mode_badges(top_bar: Control) -> void:
 		mode_key, Vector2(x, 0)) + TOP_BADGE_GAP
 	_add_top_badge(top_bar, "SubmodeBadge", str(sub_paths.get(sub_key, "")),
 		sub_key, Vector2(x, 0))
+
+
+func _build_top_profile_badge(top_bar: Control) -> void:
+	if top_bar == null:
+		return
+	var existing := top_bar.get_node_or_null("SongSelectProfileBadge") as Panel
+	if existing != null:
+		_top_profile_badge = existing
+		_top_profile_avatar = existing.get_node_or_null("Avatar") as TextureRect
+		_top_profile_name = existing.get_node_or_null("Nickname") as Label
+		_top_profile_rank = existing.get_node_or_null("Rank") as Label
+		_top_profile_level = existing.get_node_or_null("Level") as Label
+		_top_profile_player_tag = existing.get_node_or_null("PlayerTag") as Label
+		_top_profile_status_lights.clear()
+		for i in 5:
+			var light := existing.get_node_or_null("StatusLight%d" % i) as Label
+			if light != null:
+				_top_profile_status_lights.append(light)
+		_refresh_top_profile_badge()
+		return
+
+	_top_profile_badge = Panel.new()
+	_top_profile_badge.name = "SongSelectProfileBadge"
+	_top_profile_badge.position = Vector2(1500, 18)
+	_top_profile_badge.size = Vector2(382, 112)
+	_top_profile_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_top_profile_badge.z_index = 12
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color(0, 0, 0, 0)
+	panel_style.set_border_width_all(0)
+	_top_profile_badge.add_theme_stylebox_override("panel", panel_style)
+	top_bar.add_child(_top_profile_badge)
+	var profile_frame := UiKit.hud_frame(_top_profile_badge,
+		Rect2(Vector2.ZERO, _top_profile_badge.size), "PlayerHudFrame",
+		E5OriginalTheme.CYAN, E5OriginalTheme.MAGENTA, 0.0, true, 14.0)
+	profile_frame.fill_color = Color(0.008, 0.045, 0.125, 0.95)
+	profile_frame.scanline_gap = 7.0
+	profile_frame.show_side_ticks = false
+
+	_top_profile_player_tag = Label.new()
+	_top_profile_player_tag.name = "PlayerTag"
+	_top_profile_player_tag.text = "1P"
+	_top_profile_player_tag.position = Vector2(16, 12)
+	_top_profile_player_tag.size = Vector2(48, 38)
+	_top_profile_player_tag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_top_profile_player_tag.add_theme_font_size_override("font_size", 23)
+	_top_profile_player_tag.add_theme_color_override("font_color", E5OriginalTheme.CYAN)
+	_top_profile_player_tag.add_theme_color_override("font_outline_color", Color(0, 0.04, 0.12, 0.96))
+	_top_profile_player_tag.add_theme_constant_override("outline_size", 4)
+	_top_profile_player_tag.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_top_profile_badge.add_child(_top_profile_player_tag)
+
+	_top_profile_avatar = TextureRect.new()
+	_top_profile_avatar.name = "Avatar"
+	_top_profile_avatar.position = Vector2(294, 17)
+	_top_profile_avatar.size = Vector2(76, 76)
+	_top_profile_avatar.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_top_profile_avatar.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_top_profile_avatar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_top_profile_avatar.modulate = Color.WHITE
+	_top_profile_avatar.self_modulate = Color.WHITE
+	var avatar_shader := load("res://fx/circular_avatar_mask.gdshader") as Shader
+	if avatar_shader != null:
+		var avatar_material := ShaderMaterial.new()
+		avatar_material.shader = avatar_shader
+		_top_profile_avatar.material = avatar_material
+	_top_profile_badge.add_child(_top_profile_avatar)
+
+	var avatar_ring := ReferenceRect.new()
+	avatar_ring.name = "AvatarRing"
+	avatar_ring.position = Vector2(288, 11)
+	avatar_ring.size = Vector2(88, 88)
+	avatar_ring.border_color = E5OriginalTheme.GOLD
+	avatar_ring.border_width = 3.0
+	avatar_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_top_profile_badge.add_child(avatar_ring)
+
+	_top_profile_name = Label.new()
+	_top_profile_name.name = "Nickname"
+	_top_profile_name.position = Vector2(66, 10)
+	_top_profile_name.size = Vector2(214, 38)
+	_top_profile_name.clip_text = true
+	_top_profile_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_top_profile_name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_top_profile_name.add_theme_font_size_override("font_size", 22)
+	_top_profile_name.add_theme_color_override("font_color", Color.WHITE)
+	_top_profile_name.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.88))
+	_top_profile_name.add_theme_constant_override("outline_size", 4)
+	_top_profile_name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_top_profile_badge.add_child(_top_profile_name)
+
+	var divider := ColorRect.new()
+	divider.name = "Divider"
+	divider.position = Vector2(66, 49)
+	divider.size = Vector2(214, 2)
+	divider.color = Color(E5OriginalTheme.CYAN.r, E5OriginalTheme.CYAN.g,
+		E5OriginalTheme.CYAN.b, 0.58)
+	divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_top_profile_badge.add_child(divider)
+
+	_top_profile_rank = Label.new()
+	_top_profile_rank.name = "Rank"
+	_top_profile_rank.position = Vector2(178, 55)
+	_top_profile_rank.size = Vector2(102, 28)
+	_top_profile_rank.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_top_profile_rank.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_top_profile_rank.add_theme_font_size_override("font_size", 18)
+	_top_profile_rank.add_theme_color_override("font_color", E5OriginalTheme.GOLD)
+	_top_profile_rank.add_theme_color_override("font_outline_color", Color(0.18, 0.07, 0.0, 0.94))
+	_top_profile_rank.add_theme_constant_override("outline_size", 4)
+	_top_profile_rank.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_top_profile_badge.add_child(_top_profile_rank)
+
+	_top_profile_level = Label.new()
+	_top_profile_level.name = "Level"
+	_top_profile_level.position = Vector2(66, 55)
+	_top_profile_level.size = Vector2(112, 28)
+	_top_profile_level.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_top_profile_level.add_theme_font_size_override("font_size", 18)
+	_top_profile_level.add_theme_color_override("font_color", E5OriginalTheme.CYAN_SOFT)
+	_top_profile_level.add_theme_color_override("font_outline_color", Color(0, 0.03, 0.10, 0.96))
+	_top_profile_level.add_theme_constant_override("outline_size", 3)
+	_top_profile_level.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_top_profile_badge.add_child(_top_profile_level)
+
+	var status_title := UiKit.label(_top_profile_badge, "STATUS", 11,
+		Vector2(16, 87), E5OriginalTheme.MUTED, 0)
+	status_title.size = Vector2(54, 18)
+	_top_profile_status_lights.clear()
+	for i in 5:
+		var light := Label.new()
+		light.name = "StatusLight%d" % i
+		light.text = "♥"
+		light.position = Vector2(72 + i * 31, 79)
+		light.size = Vector2(28, 30)
+		light.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		light.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		light.add_theme_font_size_override("font_size", 20)
+		light.add_theme_color_override("font_color", Color(E5OriginalTheme.CYAN.r,
+			E5OriginalTheme.CYAN.g, E5OriginalTheme.CYAN.b, 0.30))
+		light.add_theme_color_override("font_outline_color", Color(0, 0.04, 0.10, 0.96))
+		light.add_theme_constant_override("outline_size", 2)
+		light.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_top_profile_badge.add_child(light)
+		_top_profile_status_lights.append(light)
+	var rating := UiKit.label(_top_profile_badge, "RATING", 11,
+		Vector2(230, 87), E5OriginalTheme.MUTED, 0)
+	rating.size = Vector2(50, 18)
+	rating.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_refresh_top_profile_badge()
+
+
+func _refresh_top_profile_badge() -> void:
+	if not is_instance_valid(_top_profile_badge):
+		return
+	var avatar_path := str(ProfileStore.profile.get("头像文件", ""))
+	var avatar_texture := AssetLoader.tex(avatar_path) if not avatar_path.is_empty() else null
+	if avatar_texture == null:
+		avatar_texture = AssetLoader.tex("UI-img/个人中心-个人资料/默认头像.png")
+	if _top_profile_avatar != null:
+		_top_profile_avatar.texture = avatar_texture
+	if _top_profile_name != null:
+		_top_profile_name.text = str(ProfileStore.profile.get("昵称", "玩家"))
+	var highest_level := ProfileStore.get_highest_mode_level_for_display()
+	var rank_index := ProfileStore.get_rank_index_for_display()
+	if _top_profile_rank != null:
+		_top_profile_rank.text = ProfileStore.get_rank_label_for_display()
+	if _top_profile_level != null:
+		_top_profile_level.text = "LV.%02d" % highest_level
+	if _top_profile_player_tag != null:
+		_top_profile_player_tag.text = "1P"
+	# 五格仅作为原版街机状态装饰，不伪装成真实可消耗生命值。
+	for i in _top_profile_status_lights.size():
+		var light := _top_profile_status_lights[i]
+		if light == null:
+			continue
+		var active := i < mini(5, rank_index)
+		light.add_theme_color_override("font_color", E5OriginalTheme.GOLD if active else Color(
+			E5OriginalTheme.CYAN.r, E5OriginalTheme.CYAN.g,
+			E5OriginalTheme.CYAN.b, 0.30))
 
 
 func _add_top_badge(parent: Control, node_name: String, path: String,
@@ -1001,13 +1276,13 @@ func _build_empty_state() -> void:
 	_empty_state.size = Vector2(900, 430)
 	_empty_state.position = _song_grid.position + (_song_grid.size - _empty_state.size) * 0.5
 	_empty_state.z_index = 25
-	var style := StyleBoxFlat.new()
-	style.bg_color = Color(0.02, 0.055, 0.095, 0.94)
-	style.border_color = Color(0.18, 0.62, 0.9, 0.82)
-	style.set_border_width_all(3)
-	style.set_corner_radius_all(16)
-	_empty_state.add_theme_stylebox_override("panel", style)
+	_empty_state.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
+		Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0))
 	add_child(_empty_state)
+	var frame := UiKit.hud_frame(_empty_state, Rect2(Vector2.ZERO, _empty_state.size),
+		"OriginalEmptyHudFrame", E5OriginalTheme.CYAN, E5OriginalTheme.MAGENTA,
+		72.0, true, 22.0)
+	frame.fill_color = Color(0.010, 0.052, 0.13, 0.97)
 	var title := UiKit.label(_empty_state, "没有找到符合条件的歌曲", 38,
 		Vector2(140, 92), Color(0.92, 0.96, 1.0), 5)
 	title.size = Vector2(620, 64)
@@ -1021,7 +1296,7 @@ func _build_empty_state() -> void:
 	reset.text = "显示全部歌曲"
 	reset.position = Vector2(300, 280)
 	reset.size = Vector2(300, 72)
-	reset.add_theme_font_size_override("font_size", 26)
+	UiKit.skin_arcade_button(reset, true, false, 26)
 	reset.pressed.connect(_on_slot_all)
 	_empty_state.add_child(reset)
 
@@ -1067,6 +1342,8 @@ func _apply_card_glass(index: int) -> void:
 func _apply_selection() -> void:
 	for i in _cards.size():
 		_apply_card_glass(i)
+	_preview_generation += 1
+	_preview_path = ""
 	_preview_timer.start(0.35)
 
 
@@ -1078,10 +1355,13 @@ func _start_preview() -> void:
 	var mp3 := str(s["mp3"])
 	if not FileAccess.file_exists(mp3):
 		return
-	var f := FileAccess.open(mp3, FileAccess.READ)
-	var stream := AudioStreamMP3.new()
-	stream.data = f.get_buffer(f.get_length())
+	var generation := _preview_generation
+	var stream := await AudioDirector.load_song_stream_async(mp3)
+	# 后台读取期间用户可能已经切到另一首；旧任务只负责收尾，绝不能覆盖新预览。
+	if generation != _preview_generation or not is_inside_tree() or stream == null:
+		return
 	_preview_player.stream = stream
+	_preview_path = mp3
 	var meta := SmParser.parse_meta(str(s["sm"]))
 	var sample_start := float(meta.get("sample_start", 0.0))
 	if is_nan(sample_start) or sample_start < 0.0:
@@ -1158,6 +1438,11 @@ func _start_song() -> void:
 	if selected >= page_songs.size():
 		return
 	var s: Dictionary = page_songs[selected]
+	var selected_mp3 := str(s.get("mp3", ""))
+	var prepared_audio: AudioStream = null
+	if _preview_path == selected_mp3 and _preview_player.stream != null:
+		prepared_audio = _preview_player.stream
+	_preview_generation += 1
 	_preview_player.stop()
 	# 原版大图二次确认只播放 backsound/开始游戏.mp3，不复用普通按钮音。
 	AudioDirector.play_sfx(AssetLoader.sound("开始游戏"), "song_select.start_game")
@@ -1165,7 +1450,7 @@ func _start_song() -> void:
 	GameState.song_select_restore = {
 		"page": page, "selected": selected, "favorites_mode": favorites_mode,
 		"detail": detail.is_open(), "filter_style": filter_style, "filter_star": filter_star,
-		"search_keyword": search_keyword,
+		"search_keyword": search_keyword, "search_language": search_language,
 	}
 	var sub := GameState.sub_mode
 	var style := str(s.get("style", ""))
@@ -1181,16 +1466,19 @@ func _start_song() -> void:
 		"star": s["star"], "mode": GameState.big_mode, "submode": sub,
 		"sm_key": s["sm_key"], "prefer_double": prefer_double, "couple": couple,
 		"target_charttype": str(s.get("charttype", "")), "style": style,
+		"audio_stream": prepared_audio,
 	})
 
 
 func _back_to_submode() -> void:
+	_preview_generation += 1
 	_preview_player.stop()
 	AudioDirector.play_bgm(AssetLoader.sound("音乐_UI"))
 	SceneRouter.change_to("submode_select")
 
 
 func _reselect_major_mode() -> void:
+	_preview_generation += 1
 	_preview_player.stop()
 	GameState.big_mode = ""
 	GameState.sub_mode = ""
@@ -1255,3 +1543,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			_flip_page(1)
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			_back_to_submode()
+
+
+func _exit_tree() -> void:
+	_preview_generation += 1
+	if is_instance_valid(_preview_timer):
+		_preview_timer.stop()
+	if is_instance_valid(_preview_player):
+		_preview_player.stop()

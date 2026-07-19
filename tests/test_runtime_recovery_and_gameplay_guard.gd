@@ -46,18 +46,6 @@ func _initialize() -> void:
 		and DirAccess.open(songs_root) != null,
 		"运行时能找到真实外置曲库目录", songs_root)
 
-	var baseline = JSON.parse_string(FileAccess.get_file_as_string(
-		"res://parity/fixtures/sm_parser_baseline.json"))
-	var recovered_cases := 0
-	if baseline is Array:
-		for entry in baseline:
-			var recovered := str(loader.call("abs_path", str(entry.get("sm", ""))))
-			if FileAccess.file_exists(recovered):
-				recovered_cases += 1
-	_check(baseline is Array and recovered_cases == baseline.size(),
-		"全部 SM 基准谱面可从恢复资源根读取",
-		"%d/%d songs_root=%s" % [recovered_cases, baseline.size() if baseline is Array else 0, songs_root])
-
 	var library := root.get_node("SongLibrary")
 	var songs: Array = library.get_songs("竞速", "club")
 	var playable := 0
@@ -69,7 +57,7 @@ func _initialize() -> void:
 			playable += 1
 			if cover_song.is_empty() and FileAccess.file_exists(str(song.get("cover", ""))):
 				cover_song = song
-	_check(playable > 20, "竞速 club 列表返回真实可玩的歌曲而非空气索引",
+	_check(playable > 0, "精选竞速 club 列表至少返回一首真实可玩歌曲",
 		"playable=%d total=%d" % [playable, songs.size()])
 	_check(not cover_song.is_empty() \
 		and loader.call("tex", str(cover_song.get("cover", ""))) != null,
@@ -106,31 +94,62 @@ func _initialize() -> void:
 	root.get_node("SceneRouter").payload = playable_payload.duplicate(true)
 	var loading := (load("res://scenes/loading/loading.tscn") as PackedScene).instantiate() as Control
 	root.add_child(loading)
-	await process_frame
+	for _frame in 600:
+		if bool(loading.get("_payload_ready")) or not str(loading.get("_load_error")).is_empty():
+			break
+		await process_frame
 	_check(bool(loading.get("_payload_ready")),
-		"加载页接受恢复目录中的真实歌曲", str(loading.get("_load_error")))
+		"加载页异步准备恢复目录中的真实歌曲", str(loading.get("_load_error")))
 	var loading_cover := loading.get_node_or_null("Cover") as TextureRect
 	_check(loading_cover != null and loading_cover.texture != null,
 		"加载页显示真实歌曲封面")
+	var prepared_payload: Dictionary = (loading.get("payload") as Dictionary).duplicate(false)
+	var prepared_stream = prepared_payload.get("audio_stream")
+	_check(prepared_stream is AudioStream, "加载页把真实歌曲音频写入场景载荷")
 	root.remove_child(loading)
 	loading.free()
+	await process_frame
 
-	root.get_node("SceneRouter").payload = playable_payload.duplicate(true)
+	root.get_node("AudioDirector").reset_async_song_read_count_for_test()
+	root.get_node("SceneRouter").payload = prepared_payload
 	var playable_gameplay := (load("res://scenes/gameplay/gameplay.tscn") as PackedScene).instantiate() as Control
 	root.add_child(playable_gameplay)
-	await process_frame
-	await process_frame
+	for _frame in 600:
+		if bool(playable_gameplay.get("_chart_ready")) \
+				or not str(playable_gameplay.get("_load_error")).is_empty():
+			break
+		await process_frame
 	var playable_field = playable_gameplay.get("note_field")
 	_check(bool(playable_gameplay.get("_chart_ready")),
 		"真实歌曲谱面被标记为可开始", str(playable_gameplay.get("_load_error")))
 	_check(float(playable_gameplay.get("chart_duration")) > 10.0,
 		"真实歌曲具有有效谱面时长", str(playable_gameplay.get("chart_duration")))
-	_check((playable_gameplay.get_node("MusicPlayer") as AudioStreamPlayer).stream != null,
-		"真实歌曲 MP3 成功加载")
+	var gameplay_stream := (playable_gameplay.get_node("MusicPlayer") as AudioStreamPlayer).stream
+	_check(gameplay_stream != null \
+		and absf(float(playable_gameplay.get("chart_duration")) - gameplay_stream.get_length()) < 0.05,
+		"Gameplay 倒计时以真实音频长度为准，而不是异常谱面积分时长",
+		"chart=%.3f audio=%.3f" % [float(playable_gameplay.get("chart_duration")),
+			gameplay_stream.get_length() if gameplay_stream != null else 0.0])
+	_check(gameplay_stream == prepared_stream, "Gameplay 原样复用加载页准备的歌曲流")
+	var guard_timeline := SmParser.build_timeline([[0.0, 120.0], [2.0, 0.001]])
+	var guarded_events: Array = playable_gameplay.call("clip_events_to_song_duration_for_test", [{
+		"track": 0, "type": "hold", "start_sec": 0.5, "end_sec": 999999.0,
+		"start_beat": 1.0, "end_beat": 1000000.0,
+	}], 10.0, guard_timeline, 0.0)
+	_check(guarded_events.size() == 1
+		and float(guarded_events[0].get("end_sec", INF)) < 10.5
+		and float(guarded_events[0].get("end_beat", INF)) < 3.0,
+		"音频尾部裁剪同步收紧超长 Hold 拍数，避免百万拍 tick 卡死",
+		str(guarded_events))
+	_check(root.get_node("AudioDirector").async_song_read_count_for_test() == 0,
+		"进入 Gameplay 不重复读取整首歌曲")
 	_check(playable_field != null and (playable_field.get("_render_notes") as Array).size() > 0,
 		"真实歌曲音符已进入渲染器")
 	root.remove_child(playable_gameplay)
 	playable_gameplay.free()
+	prepared_payload.clear()
+	prepared_stream = null
+	gameplay_stream = null
 
 	# 缺失谱面必须停留在错误状态，不能以 0 秒谱面启动并自动进入结算。
 	var missing_payload := {

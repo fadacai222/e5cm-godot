@@ -27,9 +27,9 @@ func _ready() -> void:
 	SharedVideoBackground.continue_sequence()
 	$ProfileTopPanel.texture = AssetLoader.tex("UI-img/个人中心-个人资料/上背景.png")
 	$ProfileBottomPanel.texture = AssetLoader.tex("UI-img/个人中心-个人资料/下背景.png")
-	_build_identity()
-	_build_progress("花式", Rect2(633, 387, 969, 35))
-	_build_progress("竞速", Rect2(632, 437, 969, 35))
+	_refresh_profile_view()
+	if not ProfileStore.profile_changed.is_connected(_refresh_profile_view):
+		ProfileStore.profile_changed.connect(_refresh_profile_view)
 	_build_software_info()
 	_leave_button.texture_normal = AssetLoader.tex("UI-img/个人中心-个人资料/离开.png")
 	_leave_button.pressed.connect(_confirm)
@@ -41,6 +41,15 @@ func _ready() -> void:
 
 func _update_credit_label(credits: int) -> void:
 	_credit_label.text = "CREDIT：%d/%d" % [maxi(0, credits), GameState.CREDITS_PER_GAME]
+
+
+func _refresh_profile_view() -> void:
+	if not is_inside_tree():
+		return
+	_build_identity()
+	_build_progress("花式", Rect2(633, 387, 969, 35))
+	_build_progress("竞速", Rect2(632, 437, 969, 35))
+	_build_progress("DIY", Rect2(633, 487, 969, 35))
 
 
 func _r(source: Rect2) -> Rect2:
@@ -101,8 +110,7 @@ func _build_identity() -> void:
 		_avatar_view.texture = AssetLoader.tex("UI-img/个人中心-个人资料/默认头像.png")
 	_nickname_label.text = str(profile.get("昵称", "玩家"))
 
-	var progress: Dictionary = ProfileStore.get_mode_progress("花式")
-	$RankBadge.texture = AssetLoader.tex(ProfileStore.get_rank_asset_path())
+	$RankBadge.texture = AssetLoader.tex(ProfileStore.get_rank_asset_path_for_display())
 
 	var stats: Dictionary = profile.get("统计", {})
 	var rows := [
@@ -130,17 +138,26 @@ func _build_identity() -> void:
 
 	var welcome := $WelcomeText as Label
 	welcome.text = WELCOME_TEXT
+	welcome.position = Vector2(1228, 203)
+	welcome.size = Vector2(340, 146)
+	welcome.custom_minimum_size = Vector2.ZERO
+	welcome.clip_text = true
+	welcome.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	welcome.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	welcome.add_theme_font_override("font", stat_font)
 	welcome.add_theme_font_size_override("font_size", 15)
 	welcome.add_theme_color_override("font_color", Color(160.0 / 255.0, 160.0 / 255.0, 160.0 / 255.0))
 	welcome.add_theme_constant_override("outline_size", 0)
 	welcome.add_theme_constant_override("line_spacing", 3)
 	welcome.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	# 字体/换行设置会重算最小尺寸，最后再次锁回面板内安全矩形。
+	welcome.size = Vector2(340, 146)
 
 
 func _build_stat_line(row: Label, parts: Array, font: Font, value_column: float) -> void:
 	for child in row.get_children():
-		child.queue_free()
+		row.remove_child(child)
+		child.free()
 	row.text = ""
 	row.clip_text = false
 	row.autowrap_mode = TextServer.AUTOWRAP_OFF
@@ -331,11 +348,12 @@ func _close_editor() -> void:
 
 
 func _build_progress(mode: String, source: Rect2) -> void:
-	var progress: Dictionary = ProfileStore.get_mode_progress(mode)
+	var progress: Dictionary = ProfileStore.get_mode_progress_for_display(mode)
 	var level := int(progress.get("等级", 1))
-	var exp := float(progress.get("经验", 0.0))
-	var need := maxi(1, ExpSystem.exp_to_next_level(level))
-	var ratio := 1.0 if level >= ExpSystem.MAX_LEVEL else clampf(exp / float(need), 0.0, 1.0)
+	var ratio := ExpSystem.overall_progress_ratio(progress)
+	if mode.to_upper() == "DIY":
+		_build_diy_progress(level, ratio, source)
+		return
 	var prefix := "Fancy" if mode == "花式" else "Speed"
 	var fill := get_node("%sExpFill" % prefix) as TextureRect
 	var frame := get_node("%sExpFrame" % prefix) as TextureRect
@@ -374,7 +392,7 @@ func _build_progress(mode: String, source: Rect2) -> void:
 	level_label.add_theme_constant_override("outline_size", 0)
 
 	var value_rect := _r(Rect2(source.position + Vector2(source.size.x + 10, -10),
-		Vector2(130, source.size.y + 20)))
+		Vector2(90, source.size.y + 20)))
 	value_label.position = value_rect.position
 	value_label.size = value_rect.size
 	value_label.text = "Lv. %d" % level
@@ -385,6 +403,59 @@ func _build_progress(mode: String, source: Rect2) -> void:
 	value_label.add_theme_color_override("font_color", Color.WHITE)
 	value_label.add_theme_constant_override("outline_size", 0)
 	_apply_progress_ratio(prefix, ratio)
+
+
+func _build_diy_progress(level: int, ratio: float, source: Rect2) -> void:
+	var bar := get_node("DiyExperienceProgress") as ProgressBar
+	var level_label := get_node("DiyLevelLabel") as Label
+	var value_label := get_node("DiyExpValue") as Label
+	var rect := _r(source)
+	bar.position = rect.position
+	bar.size = rect.size
+	bar.min_value = 0.0
+	bar.max_value = 1.0
+	bar.value = clampf(ratio, 0.0, 1.0)
+	bar.show_percentage = false
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var accent := Color(0.72, 0.34, 1.0)
+	var background := StyleBoxFlat.new()
+	background.bg_color = Color(0.018, 0.012, 0.045, 0.96)
+	background.border_color = Color(accent.r, accent.g, accent.b, 0.72)
+	background.set_border_width_all(2)
+	background.set_corner_radius_all(8)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = accent
+	fill.set_corner_radius_all(7)
+	fill.shadow_color = Color(accent.r, accent.g, accent.b, 0.72)
+	fill.shadow_size = 8
+	bar.add_theme_stylebox_override("background", background)
+	bar.add_theme_stylebox_override("fill", fill)
+
+	var font := FontVariation.new()
+	font.base_font = load("res://assets/fonts/fzhei.ttf") as Font
+	font.spacing_glyph = 2
+	var title_rect := _r(Rect2(source.position + Vector2(-238, -10),
+		Vector2(230, source.size.y + 20)))
+	level_label.position = title_rect.position
+	level_label.size = title_rect.size
+	level_label.text = "DIY经验值："
+	level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	level_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	level_label.add_theme_font_override("font", font)
+	level_label.add_theme_font_size_override("font_size", 23)
+	level_label.add_theme_color_override("font_color", Color.WHITE)
+	level_label.add_theme_constant_override("outline_size", 0)
+	var value_rect := _r(Rect2(source.position + Vector2(source.size.x + 10, -10),
+		Vector2(90, source.size.y + 20)))
+	value_label.position = value_rect.position
+	value_label.size = value_rect.size
+	value_label.text = "Lv. %d" % level
+	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	value_label.add_theme_font_override("font", font)
+	value_label.add_theme_font_size_override("font_size", 23)
+	value_label.add_theme_color_override("font_color", Color(0.84, 0.68, 1.0))
+	value_label.add_theme_constant_override("outline_size", 0)
 
 
 func _apply_progress_ratio(prefix: String, ratio: float) -> void:

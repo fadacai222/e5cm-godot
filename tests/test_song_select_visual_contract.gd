@@ -162,6 +162,7 @@ func _initialize() -> void:
 	var search_input := song_select.get("_search_input") as LineEdit
 	var search_progress := song_select.get("_search_progress_bar") as ProgressBar
 	var search_percent := song_select.get("_search_progress_percent") as Label
+	var language_buttons: Dictionary = song_select.get("_search_language_buttons")
 	_check(loading_overlay != null and loading_bar != null,
 		"选歌入场包含真实百分比加载遮罩和进度条")
 	_check(search_overlay != null and search_input != null \
@@ -169,7 +170,10 @@ func _initialize() -> void:
 		"搜索弹层提供歌名/歌手输入框")
 	_check(search_progress != null and search_percent != null,
 		"搜索弹层包含实时百分比和进度条")
-	var search_source := [_song(20), _song(21), _song(22)]
+	_check(language_buttons.has("中文") and language_buttons.has("日文") \
+		and language_buttons.has("韩文") and language_buttons.has("英文"),
+		"搜索弹层提供中文、日文、韩语、英文歌名分类按钮")
+	var search_source := [_song(20), _song(21), _song(22), _song(23), _song(24), _song(25)]
 	search_source[0]["name"] = "最炫民族风"
 	search_source[0]["artist"] = "凤凰传奇"
 	search_source[0]["folder"] = "folk_a"
@@ -179,6 +183,12 @@ func _initialize() -> void:
 	search_source[2]["name"] = "海阔天空"
 	search_source[2]["artist"] = "Beyond"
 	search_source[2]["folder"] = "rock"
+	search_source[3]["name"] = "アガリ症"
+	search_source[3]["artist"] = "かいりきベア"
+	search_source[4]["name"] = "다시 만난 세계"
+	search_source[4]["artist"] = "소녀시대"
+	search_source[5]["name"] = "Bad Apple"
+	search_source[5]["artist"] = "Nomico"
 	song_select.set("_source_songs", search_source)
 	song_select.set("favorites_mode", false)
 	song_select.set("filter_style", "")
@@ -192,6 +202,17 @@ func _initialize() -> void:
 	_check(search_results.size() == 2 and int(song_select.get("page")) == 0 \
 		and int(song_select.get("selected")) == 0,
 		"搜索歌手返回全部歌曲并自动跳到第一页首项", str(search_results))
+
+	song_select.call("_set_search_language", "日文")
+	song_select.call("_submit_search", "")
+	for _frame in 30:
+		await process_frame
+		if not bool(song_select.get("_search_running")):
+			break
+	var japanese_results: Array = song_select.get("songs")
+	_check(japanese_results.size() == 1 \
+		and str(japanese_results[0].get("name", "")) == "アガリ症",
+		"不输入关键词也能直接筛选日文歌名", str(japanese_results))
 
 	var preview := song_select.get_node("PreviewPlayer") as AudioStreamPlayer
 	preview.stop()

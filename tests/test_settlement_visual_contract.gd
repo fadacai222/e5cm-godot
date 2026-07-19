@@ -76,6 +76,14 @@ func _initialize() -> void:
 	root.add_child(settlement)
 	await process_frame
 
+	var stored_speed: Dictionary = profile_store.get_mode_progress("竞速")
+	var displayed_speed: Dictionary = profile_store.get_mode_progress_for_display("竞速")
+	_check(int(stored_speed.get("等级", 0)) == 1 and float(stored_speed.get("经验", -1.0)) == 0.0,
+		"第一把缓存经验不提前写入正式存档", str(stored_speed))
+	_check(int(displayed_speed.get("等级", 0)) == 5 \
+		and absf(float(displayed_speed.get("经验", 0.0)) - 3.0) < 0.01,
+		"第一把缓存经验实时同步到个人中心显示进度", str(displayed_speed))
+
 	# 阶段一：所有坐标均来自原版 1600×900 布局 ×1.2。
 	_check(_near(settlement.get_node_or_null("SettlementPanel") as Control,
 		Rect2(115.2, 120.0, 840.0, 840.0)), "1P 成绩玩家框使用原版位置与尺寸")
@@ -152,7 +160,23 @@ func _initialize() -> void:
 		"经验窗包含段位徽章槽")
 	_check(reward != null and reward.get_node_or_null("LevelUpEffect") != null,
 		"跨多级经验结算显示升级动画层")
+	var style_frame := reward.get_node_or_null("StyleExperienceBarFrame") as TextureRect if reward else null
+	var style_clip := reward.get_node_or_null("StyleExperienceBarFillClip") as Control if reward else null
+	var style_fill := style_clip.get_node_or_null("StyleExperienceBarFill") as TextureRect \
+		if style_clip != null else null
+	_check(style_frame != null and style_clip != null and style_fill != null \
+		and style_clip.position.distance_to(style_frame.position) < 0.1 \
+		and absf(style_clip.size.y - style_frame.size.y) < 0.1 \
+		and style_fill.size.distance_to(style_frame.size) < 0.1,
+		"结算经验填充纹理与外框使用同一完整矩形",
+		"frame=%s clip=%s fill=%s" % [style_frame.get_rect(), style_clip.get_rect(), style_fill.get_rect()] \
+			if style_frame and style_clip and style_fill else "missing")
 	var speed_clip := reward.get_node_or_null("SpeedExperienceBarFillClip") as Control if reward else null
+	var speed_frame := reward.get_node_or_null("SpeedExperienceBarFrame") as TextureRect if reward else null
+	_check(speed_clip != null and speed_frame != null \
+		and speed_clip.position.distance_to(speed_frame.position) < 0.1 \
+		and absf(speed_clip.size.y - speed_frame.size.y) < 0.1,
+		"动画经验条从外框左边界开始且高度完全一致")
 	var initial_exp_width := speed_clip.size.x if speed_clip else -1.0
 	await create_timer(1.55).timeout
 	var level_up_effect := reward.get_node_or_null("LevelUpEffect") as TextureRect if reward else null

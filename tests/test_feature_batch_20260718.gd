@@ -96,6 +96,28 @@ func _initialize() -> void:
 		and ComboFxScript.milestone_for_combo(247) == 200,
 		"百连里程碑按 100 的整数倍计算")
 
+	var tile_image := Image.create(16, 16, false, Image.FORMAT_RGBA8)
+	tile_image.fill(Color.WHITE)
+	var tile_texture := ImageTexture.create_from_image(tile_image)
+	for height in range(1, 5000, 7):
+		field.call("_tiled_hold_texture", tile_texture, "test", 16, height)
+	_check(int(field.call("hold_tile_cache_size_for_test")) <= 96 \
+		and int(field.call("hold_tile_height_step_for_test")) == 32,
+		"Hold 平铺纹理按高度分档且缓存有硬上限",
+		"cache=%d" % int(field.call("hold_tile_cache_size_for_test")))
+
+	var effect_03: Dictionary = asset_loader.call("key_effect_atlas", "03")
+	var effect_03_uses_shared_texture := false
+	for raw_frame in effect_03.values():
+		if raw_frame is AtlasTexture:
+			var shared_atlas: Texture2D = (raw_frame as AtlasTexture).atlas
+			effect_03_uses_shared_texture = shared_atlas != null \
+				and shared_atlas.resource_path.replace("\\", "/").contains(
+					"/箭头/02/key_effect/skin.png")
+			break
+	_check(not effect_03.is_empty() and effect_03_uses_shared_texture,
+		"03 箭头保留独立帧表并复用 02 的相同击中特效纹理")
+
 	library.free()
 	field.free()
 	if _failures == 0:

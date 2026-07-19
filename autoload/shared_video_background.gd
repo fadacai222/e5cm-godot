@@ -13,9 +13,9 @@ func _ready() -> void:
 
 	_fallback = TextureRect.new()
 	_fallback.name = "PlayerSelectFallback"
-	_fallback.texture = load("res://assets/textures/coin_bg.jpg") \
-		if ResourceLoader.exists("res://assets/textures/coin_bg.jpg") \
-		else AssetLoader.tex_key("背景_玩家")
+	_fallback.texture = AssetLoader.tex("res://assets/textures/coin_bg.jpg")
+	if _fallback.texture == null:
+		_fallback.texture = AssetLoader.tex_key("背景_玩家")
 	_fallback.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_fallback.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_fallback.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED

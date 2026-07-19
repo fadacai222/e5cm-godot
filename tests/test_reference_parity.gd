@@ -51,12 +51,13 @@ func _initialize() -> void:
 	await process_frame
 	var top_panel := profile.get_node_or_null("ProfileTopPanel") as Control
 	var bottom_panel := profile.get_node_or_null("ProfileBottomPanel") as Control
-	_check(_near_rect(top_panel, Rect2(208.125, 175.3125, 1395, 285.9375)),
-		"个人中心上面板使用原版坐标", str(Rect2(top_panel.position, top_panel.size)) if top_panel else "null")
-	_check(_near_rect(bottom_panel, Rect2(200.625, 509.0625, 1404.375, 356.25)),
-		"个人中心下面板使用原版坐标", str(Rect2(bottom_panel.position, bottom_panel.size)) if bottom_panel else "null")
-	_check(profile.get_tree().get_nodes_in_group("profile_exp_bar").size() == 2,
-		"个人中心仅显示原版花式与竞速经验条")
+	_check(_near_rect(top_panel, Rect2(208.125, 175.3125, 1395, 334.6875)),
+		"个人中心上面板扩展后完整容纳三模式进度", str(Rect2(top_panel.position, top_panel.size)) if top_panel else "null")
+	_check(_near_rect(bottom_panel, Rect2(200.625, 550.0, 1404.375, 375.0)),
+		"个人中心下面板下移并保持软件信息完整", str(Rect2(bottom_panel.position, bottom_panel.size)) if bottom_panel else "null")
+	_check(profile.get_tree().get_nodes_in_group("profile_exp_bar").size() == 2
+		and profile.get_node_or_null("DiyExperienceProgress") != null,
+		"个人中心保留花式/竞速原版贴图条并新增 DIY 独立进度条")
 	profile.call("_open_nickname_editor")
 	await process_frame
 	var profile_editor := profile.get_node_or_null("ProfileEditorOverlay") as Control

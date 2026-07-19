@@ -54,12 +54,23 @@ func _initialize() -> void:
 	var identity := content_body.get_node_or_null("ProfileIdentityCard") as Control if content_body else null
 	var progress := content_body.get_node_or_null("ProfileProgressCard") as Control if content_body else null
 	var nickname := identity.get_node_or_null("NicknameInput") as LineEdit if identity else null
+	var profile_avatar := identity.get_node_or_null("ProfileAvatar") as TextureRect if identity else null
 	_check(identity != null and progress != null and nickname != null,
 		"用户信息页真实构建头像/昵称和成长信息双卡片")
+	var profile_avatar_material := profile_avatar.material as ShaderMaterial \
+		if profile_avatar != null else null
+	_check(profile_avatar_material != null and profile_avatar_material.shader != null
+		and profile_avatar_material.shader.resource_path == "res://fx/circular_avatar_mask.gdshader"
+		and profile_avatar.modulate == Color.WHITE
+		and profile_avatar.self_modulate == Color.WHITE,
+		"ESC 用户信息头像使用统一原色遮罩，不再二次乘色发暗",
+		profile_avatar_material.shader.resource_path \
+			if profile_avatar_material != null and profile_avatar_material.shader != null else "null")
 	_check(progress != null and progress.get_node_or_null("ProfileRankIcon") != null \
 		and progress.get_node_or_null("花式Progress/花式ExperienceProgress") != null \
-		and progress.get_node_or_null("竞速Progress/竞速ExperienceProgress") != null,
-		"用户信息页显示段位与花式/竞速经验条")
+		and progress.get_node_or_null("竞速Progress/竞速ExperienceProgress") != null \
+		and progress.get_node_or_null("diyProgress/diyExperienceProgress") != null,
+		"用户信息页显示段位与花式/竞速/DIY 三条经验进度")
 	if nickname != null:
 		nickname.text = "ESC\n测试\t用户"
 		menu.call("_save_profile_name")
@@ -83,6 +94,18 @@ func _initialize() -> void:
 	menu.call("_step_display_mode", 1)
 	_check(settings.display_mode == "独占全屏",
 		"显示模式使用 Windows 独占全屏而非普通无边框铺满")
+
+	settings.max_fps = 0
+	settings.apply_performance()
+	_check(settings.max_fps == 240 and Engine.max_fps == 240,
+		"旧版不限帧设置自动迁移到 240 FPS，菜单不再空跑上千帧")
+	var status_hud = load("res://autoload/status_hud.gd").new()
+	root.add_child(status_hud)
+	await process_frame
+	_check(absf(float(status_hud.call("fps_for_display", 2288.0)) - 240.0) < 0.01,
+		"右下角 FPS 对瞬时异常采样按当前帧率上限显示")
+	root.remove_child(status_hud)
+	status_hud.free()
 
 	menu.free()
 	root.get_node("AudioDirector").release_for_shutdown()

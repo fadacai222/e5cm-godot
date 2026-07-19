@@ -4,6 +4,7 @@ extends Node
 ## 负责：加载/保存设置、运行时构建 InputMap（键位可重绑）。
 
 const CONFIG_PATH := "user://settings.cfg"
+const SUPPORTED_FPS_LIMITS := [60, 120, 144, 165, 240]
 
 # ---- 游戏设置（默认值与旧版一致）----
 var scroll_speed := 4.0            # 卷轴速度 X1.0~X7.0 步进0.25
@@ -26,7 +27,7 @@ var autoplay := false
 var show_ready_animation := true
 var background_brightness_level := 0
 var arrow_skin := "原版默认"
-var max_fps := 240        # 0 = 不限
+var max_fps := 240        # 固定上限，禁止旧版“不限帧”把菜单跑到上千 FPS
 var vsync := false
 
 # ---- 默认键位（P1: 1/7/5/9/3 + 小键盘；P2/双人左区: Z/Q/S/E/C）----
@@ -57,8 +58,13 @@ func _ready() -> void:
 
 
 ## 应用帧率/垂直同步设置
+func _normalize_fps_limit(value: int) -> int:
+	return value if value in SUPPORTED_FPS_LIMITS else 240
+
+
 func apply_performance() -> void:
-	Engine.max_fps = maxi(0, max_fps)
+	max_fps = _normalize_fps_limit(max_fps)
+	Engine.max_fps = max_fps
 	DisplayServer.window_set_vsync_mode(
 		DisplayServer.VSYNC_ENABLED if vsync else DisplayServer.VSYNC_DISABLED)
 	apply_display_mode()
@@ -105,7 +111,7 @@ func load_settings() -> void:
 	show_ready_animation = bool(cfg.get_value("game", "show_ready_animation", true))
 	background_brightness_level = int(cfg.get_value("game", "background_brightness_level", 0))
 	arrow_skin = str(cfg.get_value("game", "arrow_skin", "原版默认"))
-	max_fps = int(cfg.get_value("display", "max_fps", 240))
+	max_fps = _normalize_fps_limit(int(cfg.get_value("display", "max_fps", 240)))
 	vsync = bool(cfg.get_value("display", "vsync", false))
 
 	key_bindings = _default_bindings()

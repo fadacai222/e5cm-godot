@@ -67,29 +67,76 @@ func _initialize() -> void:
 	await process_frame
 	await process_frame
 
-	# 9.1 READY/GO：必须是完整 4.57s 分层动画，且实际覆盖 1920×1080。
+	# 9.1 READY/GO：慢速 8.15s 分层动画，实际覆盖 1920×1080。
 	var ready = gameplay.get("ready_anim") as Control
 	_check(ready != null and ready.size == Vector2(1920, 1080),
 		"准备动画根层实际覆盖 1920×1080", str(ready.size) if ready else "null")
 	_check(ready != null and ready.has_method("total_duration") \
-		and absf(float(ready.call("total_duration")) - 4.57) < 0.03,
-		"准备动画采用原版约 4.57 秒完整时间轴")
+		and absf(float(ready.call("total_duration")) - 8.15) < 0.03,
+		"准备动画使用放慢后的 8.15 秒完整时间轴")
 	_check(ready != null and ready.has_method("seek_for_test"), "准备动画支持确定性关键帧采样")
 	if ready != null and ready.has_method("seek_for_test"):
-		ready.call("seek_for_test", 2.0)
-		await process_frame
 		var ready_front := ready.get_node_or_null("Guide/ReadyFront") as CanvasItem
 		var go_front := ready.get_node_or_null("Guide/GoFront") as CanvasItem
-		_check(ready_front != null and ready_front.visible and ready_front.modulate.a > 0.05,
-			"READY 关键帧真实可见")
-		_check(go_front != null and not go_front.visible, "READY 阶段不会提前显示 GO")
-		ready.call("seek_for_test", 3.45)
-		await process_frame
-		_check(go_front != null and go_front.visible and go_front.modulate.a > 0.05,
-			"GO 关键帧真实可见")
+		var guide := ready.get_node_or_null("Guide") as Control
+		var note_field := gameplay.get("note_field") as Node2D
+		var background := gameplay.get_node("GameplayBackground") as TextureRect
+		var background_dim := gameplay.get_node("BackgroundDim") as ColorRect
+		var note_region := gameplay.get_node("NoteFieldRegion") as Control
+		var intro_hud := gameplay.get_node("LegacyTopHud") as Control
+
+		ready.call("seek_for_test", 0.0)
+		gameplay.call("_update_ready_reveal")
+		_check(background_dim.color.a >= 0.99 and intro_hud.modulate.a == 0.0
+			and note_field.modulate.a == 0.0,
+			"切入 Gameplay 首帧保持全黑且 HUD/判定区不闪现")
+		_check(ready.get_node_or_null("SceneDim") == null
+			and background.z_index < background_dim.z_index
+			and background_dim.z_index < note_region.z_index
+			and note_region.z_index < intro_hud.z_index,
+			"黑幕固定在背景上方、判定区和血条下方")
+
+		ready.call("seek_for_test", 1.45)
+		gameplay.call("_update_ready_reveal")
+		_check(absf(background_dim.color.a) <= 0.001,
+			"背景先完整满亮度出现")
+		ready.call("seek_for_test", 2.45)
+		gameplay.call("_update_ready_reveal")
+		_check(absf(background_dim.color.a - 0.70) <= 0.01,
+			"底层黑幕随后缓慢加深到 70%")
+
+		ready.call("seek_for_test", 2.55)
+		gameplay.call("_update_ready_reveal")
+		_check(note_field.modulate == Color.WHITE and note_field.scale == Vector2.ONE,
+			"判定区到点直接满亮度显示，不再缩放淡入")
+		ready.call("seek_for_test", 3.30)
+		gameplay.call("_update_ready_reveal")
+		_check(intro_hud.modulate == Color.WHITE and intro_hud.position.y > -260.0,
+			"顶部血条组满亮度从屏幕外缓慢下落")
+
+		ready.call("seek_for_test", 4.05)
+		_check(guide != null and guide.position.x <= -1910.0,
+			"ARE YOU READY 动画组从左侧屏幕外开始入场")
+		ready.call("seek_for_test", 4.85)
+		_check(guide != null and absf(guide.position.x) <= 1.0,
+			"准备动画组平稳进入画面")
+		ready.call("seek_for_test", 5.40)
+		_check(ready_front != null and ready_front.visible and ready_front.modulate.a > 0.75
+			and go_front != null and not go_front.visible,
+			"ARE YOU READY 清晰显示并保留停顿")
+		ready.call("seek_for_test", 6.80)
+		_check(go_front != null and go_front.visible and go_front.modulate.a > 0.75,
+			"停顿后 GAME START 关键帧真实可见")
+		ready.call("seek_for_test", 7.65)
+		_check(guide != null and guide.position.x > 0.0 and go_front.visible,
+			"GAME START 随整组向右退场")
+		ready.call("seek_for_test", 8.15)
+		gameplay.call("_update_ready_reveal")
+		_check(background_dim.modulate == Color.WHITE,
+			"准备动画结束时恢复游戏内背景亮度设置")
 	var conductor = gameplay.get("conductor")
-	_check(conductor != null and absf(float(conductor.get("lead_in_sec")) - 4.57) < 0.03,
-		"音乐起播倒计时与完整准备动画同步", str(conductor.get("lead_in_sec")) if conductor else "null")
+	_check(conductor != null and absf(float(conductor.get("lead_in_sec")) - 8.15) < 0.03,
+		"音乐起播倒计时与慢速准备动画同步", str(conductor.get("lead_in_sec")) if conductor else "null")
 
 	# 9.3 左上头像：原版圆形裁切、正确层级、动态框/VIP装饰和昵称尺寸。
 	var hud := gameplay.get_node("LegacyTopHud") as Control
@@ -103,6 +150,12 @@ func _initialize() -> void:
 		"头像使用原版内圆区位置与正方形尺寸", str(avatar.get_rect()) if avatar else "null")
 	_check(avatar != null and avatar.material is ShaderMaterial,
 		"头像使用圆形像素遮罩而非方形 clip_contents")
+	var avatar_material := avatar.material as ShaderMaterial if avatar != null else null
+	_check(avatar_material != null and avatar_material.shader != null
+		and avatar_material.shader.resource_path == "res://fx/circular_avatar_mask.gdshader"
+		and avatar.modulate == Color.WHITE and avatar.self_modulate == Color.WHITE,
+		"Gameplay 头像使用统一原色遮罩，不再二次乘色发暗",
+		avatar_material.shader.resource_path if avatar_material != null and avatar_material.shader != null else "null")
 	_check(avatar_frame != null and avatar_frame.z_index > avatar.z_index,
 		"头像框覆盖头像边缘但不遮住头像中心")
 	_check(avatar_fx != null and avatar_fx.texture != null and avatar_fx.visible,
@@ -193,6 +246,26 @@ func _initialize() -> void:
 			and is_equal_approx(phase_before_pause, phase_during_pause),
 			"暴走滚动随谱面时间推进，暂停时保持同一相位",
 			"before=%s paused=%s" % [phase_before_pause, phase_during_pause])
+	_check(gameplay.has_method("hp_overdrive_particle_delay_for_test") \
+		and gameplay.has_method("hp_overdrive_energy_active_for_test") \
+		and gameplay.has_method("_reset_hp_overdrive_stage"),
+		"暴走血条提供连续满血 5 秒后的第二阶段粒子状态机")
+	if hp_system != null and hp_energy != null:
+		hp_system.set("hp", 1200)
+		gameplay.call("_reset_hp_overdrive_stage")
+		gameplay.call("_update_hud")
+		gameplay.call("_update_dynamic_hud", 1.0, 4.99)
+		_check(hp_full.visible and not hp_energy.visible \
+			and not bool(gameplay.call("hp_overdrive_energy_active_for_test")),
+			"满血第一阶段立即显示并向右滚动主血条，前 4.99 秒不出现外溢粒子")
+		gameplay.call("_update_dynamic_hud", 1.02, 0.02)
+		_check(hp_energy.visible \
+			and bool(gameplay.call("hp_overdrive_energy_active_for_test")) \
+			and absf(float(gameplay.call("hp_overdrive_particle_delay_for_test")) - 5.0) < 0.001,
+			"连续保持满血 5 秒后进入第二阶段并开启外溢粒子动画")
+		hp_system.set("hp", 700)
+		gameplay.call("_update_hud")
+		gameplay.call("_update_dynamic_hud", 1.04, 0.0)
 	_check(gameplay.has_method("_hp_wave_offset"), "血条具有确定性的左右波浪函数")
 	if gameplay.has_method("_hp_wave_offset"):
 		var wave_a := float(gameplay.call("_hp_wave_offset", 0.0))
@@ -350,16 +423,28 @@ func _initialize() -> void:
 			"左右空区导向带、扫描栅格和侧边粒子已删除，避免额外掉帧")
 		milestone_fx.call("stop_effect")
 	_check(note_field != null and note_field.has_method("set_combo_gold_fx_level") \
-		and note_field.has_method("is_combo_gold_fx_enabled"),
-		"NoteField 提供随百连等级增强的 Tap/Hold/Key 金化接口")
+		and note_field.has_method("set_combo_lane_fx_enabled") \
+		and note_field.has_method("is_combo_gold_fx_enabled") \
+		and note_field.has_method("is_combo_lane_fx_enabled"),
+		"NoteField 将 Tap/Hold/Key 金化与轨道粒子拆成独立阶段接口")
 	if note_field != null and note_field.has_method("set_combo_gold_fx_level"):
-		score_system.current_combo = 99
+		score_system.current_combo = 49
 		gameplay.call("_update_hud")
+		score_system.current_combo = 50
+		gameplay.call("_update_hud")
+		_check(bool(note_field.call("is_combo_gold_fx_enabled")) \
+			and not bool(note_field.call("is_combo_lane_fx_enabled")) \
+			and not bool(note_field.call("combo_lane_fx_visible_for_test")) \
+			and bool(milestone_fx.call("is_active")) \
+			and not bool(milestone_fx.call("milestone_visual_active_for_test")),
+			"真实跨越 50 Combo 时只启动 Tap/Hold/Key 金色材质，不提前爆出轨道与全局演出")
 		score_system.current_combo = 100
 		gameplay.call("_update_hud")
 		_check(bool(note_field.call("is_combo_gold_fx_enabled")) \
-			and bool(milestone_fx.call("is_active")),
-			"真实跨越 100 Combo 时启动轻量全局金光与 Tap/Hold/Key 金色材质")
+			and bool(note_field.call("is_combo_lane_fx_enabled")) \
+			and bool(note_field.call("combo_lane_fx_visible_for_test")) \
+			and bool(milestone_fx.call("milestone_visual_active_for_test")),
+			"真实跨越 100 Combo 时在箭头金化基础上开启轨道粒子与全局金光")
 		score_system.current_combo = 200
 		gameplay.call("_update_hud")
 		_check(int(milestone_fx.call("milestone_level_for_test")) == 2 \
@@ -367,10 +452,26 @@ func _initialize() -> void:
 			"跨越 200 Combo 后全局亮度和箭头金化同步升级")
 		score_system.current_combo = 0
 		gameplay.call("_update_hud")
+		_check(bool(milestone_fx.call("is_active")) \
+			and bool(milestone_fx.call("is_decaying")) \
+			and int(note_field.call("combo_gold_fx_level_for_test")) == 2,
+			"失误后先保留当前百连档位，不瞬间撤走全部特效")
+		var decay_step := float(milestone_fx.call("decay_level_hold_seconds_for_test"))
+		var decay_fade := float(milestone_fx.call("decay_final_fade_seconds_for_test"))
+		milestone_fx.call("_process", decay_step + 0.01)
+		_check(int(milestone_fx.call("milestone_level_for_test")) == 1 \
+			and int(note_field.call("combo_gold_fx_level_for_test")) == 1,
+			"全局 Bloom、Tap/Hold/Key 与七轨粒子同步逐级降档")
+		milestone_fx.call("_process", decay_step + decay_fade * 0.5)
+		_check(float(note_field.call("combo_gold_fx_visibility_for_test")) > 0.0 \
+			and float(note_field.call("combo_gold_fx_visibility_for_test")) < 1.0,
+			"最低档全套特效共同平滑淡出")
+		milestone_fx.call("_process", decay_fade + 0.05)
 		_check(not bool(milestone_fx.call("is_active")) \
 			and not bool(note_field.call("is_combo_gold_fx_enabled")),
-			"失误导致 Combo 断掉时持续百连演出立即停止")
+			"逐级降档完成后才释放百连材质与粒子")
 		note_field.call("set_combo_gold_fx_level", 1)
+		note_field.call("set_combo_lane_fx_enabled", false)
 		var receptors: Array = note_field.get("_receptors")
 		var receptor_gold_material := (receptors[0] as Sprite2D).material as ShaderMaterial \
 			if not receptors.is_empty() else null
@@ -378,14 +479,39 @@ func _initialize() -> void:
 			and receptor_gold_material != null \
 			and float(receptor_gold_material.get_shader_parameter("outline_pixels")) >= 2.5 \
 			and float(receptor_gold_material.get_shader_parameter("fx_strength")) >= 1.0,
-			"100 Combo 时 Key 贴图启用可见金色描边、流光和闪烁")
+			"50 Combo 时 Key 贴图先启用可见金色描边、流光和闪烁")
+		note_field.call("set_combo_lane_fx_enabled", true)
+		note_field.call("set_combo_gold_fx_level", 3)
+		var capped_gold_fill := float(receptor_gold_material.get_shader_parameter("gold_fill"))
 		note_field.call("set_combo_gold_fx_level", 7)
-		_check(float(receptor_gold_material.get_shader_parameter("gold_fill")) >= 0.98,
-			"高百连等级把整个箭头逐步转为金色")
+		note_field.call("set_combo_lane_fx_enabled", true)
+		_check(int(note_field.call("combo_gold_fx_level_for_test")) == 3 \
+			and is_equal_approx(float(receptor_gold_material.get_shader_parameter("gold_fill")),
+				capped_gold_fill),
+			"箭头金化在 300 Combo 后封顶，不再继续加深")
+		var expected_gold_lanes := 14 if int(note_field.get("track_count")) >= 10 else 7
+		_check(int(note_field.call("combo_lane_fx_count_for_test")) == expected_gold_lanes \
+			and int(note_field.call("combo_lane_particle_system_count_for_test")) == expected_gold_lanes * 2 \
+			and bool(note_field.call("combo_lane_fx_visible_for_test")),
+			"百连期间每位玩家的左手、五踏板、右手七条轨道显示金色渐变粒子描边",
+			"expected=%d lanes=%d particles=%d visible=%s" % [expected_gold_lanes,
+				int(note_field.call("combo_lane_fx_count_for_test")),
+				int(note_field.call("combo_lane_particle_system_count_for_test")),
+				str(note_field.call("combo_lane_fx_visible_for_test"))])
+		_check(int(note_field.call("combo_lane_flow_material_count_for_test")) == expected_gold_lanes * 2 \
+			and int(note_field.call("combo_lane_flow_line_count_for_test")) == expected_gold_lanes * 2 \
+			and int(note_field.call("combo_lane_glow_line_count_for_test")) == expected_gold_lanes * 4 \
+			and int(note_field.call("combo_lane_peak_particle_amount_for_test")) >= 30 \
+			and float(note_field.call("combo_lane_flow_intensity_for_test")) >= 1.7,
+			"七轨百连特效只在两侧描边运行高速流光、白金核心炫光和渐变金粒子")
+		_check(int(note_field.call("combo_lane_body_fill_count_for_test")) == 0 \
+			and float(note_field.call("combo_lane_edge_bottom_for_test")) >= 1080.0,
+			"轨道本体保持完全隐藏，金色描边延伸到 1080p 画布底部之外")
 		note_field.call("set_combo_gold_fx_level", 0)
 		_check(not bool(note_field.call("is_combo_gold_fx_enabled")) \
-			and (receptors[0] as Sprite2D).material == null,
-			"断连后 Key 金色材质干净释放")
+			and (receptors[0] as Sprite2D).material == null \
+			and not bool(note_field.call("combo_lane_fx_visible_for_test")),
+			"断连后 Key 金色材质和七轨粒子描边干净释放")
 
 	var gold_field = load("res://scenes/gameplay/note_field.gd").new()
 	root.add_child(gold_field)
@@ -528,7 +654,7 @@ func _initialize() -> void:
 	var neck := item.get("neck") as Sprite2D
 	var head := item.get("head") as Sprite2D
 	var tail := item.get("tail") as Sprite2D
-	_check(body != null and absf(body.scale.y - 1.0) < 0.02,
+	_check(body != null and absf(body.scale.y - 1.0) < 0.04,
 		"Hold 身体由平铺纹理生成，不再强制纵向拉伸", str(body.scale) if body else "null")
 	_check(neck != null and neck.texture != null and neck.visible, "Hold 使用 arrow_mask 作为头身过渡段")
 	_check(head != null and tail != null and head.modulate.a >= 0.999 \

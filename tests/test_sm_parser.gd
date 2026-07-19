@@ -33,6 +33,8 @@ func _initialize() -> void:
 		idx += 1
 		_compare(idx, entry)
 	_test_diy_json_chart()
+	_test_diy_terminal_freeze_duration()
+	_test_real_sugarfree_duration()
 
 	if _failures == 0:
 		print("ALL %d BASELINE CASES PASSED" % baseline.size())
@@ -73,6 +75,65 @@ func _test_diy_json_chart() -> void:
 	else:
 		_failures += 1
 		print("  FAIL  DIY JSON 谱面解析 -> %s" % str(result))
+
+
+func _test_diy_terminal_freeze_duration() -> void:
+	var path := "user://test_diy_terminal_freeze.json"
+	var payload := {
+		"scoreInfo": {"offset": 0.0, "version": 3},
+		"bpms": [
+			{"lineNo": 0, "bpmVal": 128.0},
+			{"lineNo": 96, "bpmVal": 999.0},
+			{"lineNo": 192, "bpmVal": 0.001},
+		],
+		"boards": [{"lineDatas": [
+			{"lineNo": 96, "arrows": [{"aType": 1, "player": 1, "length": 0}]},
+			{"lineNo": 288, "arrows": [{"aType": 7, "player": 1, "length": 0}]},
+		]}],
+	}
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(JSON.stringify(payload))
+	file.close()
+	var result := SmParserScript.build_events(path, false)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var events: Array = result.get("events", [])
+	var raw_bpms: Array = result.get("bpms", [])
+	var timeline: Array = result.get("timeline", [])
+	var duration_timeline: Array = result.get("duration_timeline", [])
+	var ok := events.size() == 2 \
+		and float(result.get("duration", 99999.0)) < 5.0 \
+		and is_equal_approx(float(raw_bpms[-1][1]), 0.001) \
+		and is_equal_approx(float(timeline[-1][2]), 0.001) \
+		and not is_equal_approx(float(duration_timeline[-1][2]), 0.001)
+	if ok:
+		print("  PASS  DIY JSON 锁尾 BPM 只从总时长估算移除，事件时间轴保持作者原值")
+	else:
+		_failures += 1
+		print("  FAIL  DIY JSON 终局冻结时长 -> %s" % str(result))
+
+
+func _test_real_sugarfree_duration() -> void:
+	var project_root := ProjectSettings.globalize_path("res://")
+	var path := project_root.path_join(
+		"songs/diy/社区竞速/SugarFree(슈가프리)(BigRoomver.)#11/SugarFree(슈가프리)(BigRoomver.).json")
+	if not FileAccess.file_exists(path):
+		print("  SKIP  SugarFree 真实 DIY 谱面不在当前测试环境")
+		return
+	var result := SmParserScript.build_events(path, false)
+	var events: Array = result.get("events", [])
+	var duration := float(result.get("duration", 0.0))
+	var timeline: Array = result.get("timeline", [])
+	var patches: Array = result.get("compat_patches", [])
+	var ok := str(result.get("error", "")).is_empty() \
+		and not events.is_empty() and duration > 150.0 and duration < 180.0 \
+		and not timeline.is_empty() and is_equal_approx(float(timeline[-1][2]), 0.001) \
+		and patches.has("terminal_low_bpm_excluded_from_duration")
+	if ok:
+		print("  PASS  SugarFree 总时长恢复为 %.2f 秒且锁尾 BPM 保留" % duration)
+	else:
+		_failures += 1
+		print("  FAIL  SugarFree 真实 DIY 谱面时长 duration=%.3f patches=%s error=%s" % [
+			duration, patches, str(result.get("error", ""))])
 
 
 func _compare(idx: int, entry: Dictionary) -> void:

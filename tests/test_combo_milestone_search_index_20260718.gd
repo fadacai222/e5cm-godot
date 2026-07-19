@@ -1,5 +1,5 @@
 extends SceneTree
-## 2026-07-18 轻量持续百连金化、侧边导向删除、曲库预建搜索索引与独立里程碑音效回归。
+## 持续百连金化、三档封顶、七轨金色粒子描边与多语言歌名搜索回归。
 
 const AUTOLOADS := [
 	["AssetLoader", "res://autoload/asset_loader.gd"],
@@ -55,40 +55,58 @@ func _initialize() -> void:
 	var intensity_100 := float(milestone_fx.global_gold_intensity_for_test())
 	milestone_fx.play_milestone(300, false)
 	var intensity_300 := float(milestone_fx.global_gold_intensity_for_test())
+	milestone_fx.play_milestone(900, false)
+	var intensity_900 := float(milestone_fx.global_gold_intensity_for_test())
 	_check(int(milestone_fx.milestone_level_for_test()) == 3 \
-		and intensity_300 > intensity_100,
-		"每多 100 Combo 只提高全局亮度与箭头金化，不再增加侧边绘制负担",
-		"intensity=%.2f→%.2f" % [intensity_100, intensity_300])
+		and intensity_300 > intensity_100 and is_equal_approx(intensity_900, intensity_300),
+		"百连亮度最多增强三次，300 Combo 后保持封顶强度",
+		"intensity=%.2f→%.2f→%.2f" % [intensity_100, intensity_300, intensity_900])
 	milestone_fx.stop_effect()
-	_check(not milestone_fx.is_active(), "Combo 断掉后可立即停止持续金化")
+	_check(not milestone_fx.is_active(), "重开、退出或结算可立即强制清理持续金化")
 
-	# 箭头金化必须随百连等级增强，并在高等级变成完整金色，而不是固定 5 秒描边。
+	# 50 Combo 先箭头金化，100 Combo 再开启轨道粒子；高等级继续增强并在三档封顶。
 	var note_field = load("res://scenes/gameplay/note_field.gd").new()
 	root.add_child(note_field)
 	note_field.setup(5, 4.0, false)
 	_check(note_field.has_method("set_combo_gold_fx_level") \
+		and note_field.has_method("set_combo_lane_fx_enabled") \
+		and note_field.has_method("is_combo_lane_fx_enabled") \
 		and note_field.has_method("combo_gold_fx_level_for_test"),
-		"NoteField 提供百连等级金化接口")
+		"NoteField 提供箭头与轨道分阶段金化接口")
 	if note_field.has_method("set_combo_gold_fx_level"):
 		note_field.set_combo_gold_fx_level(1)
+		note_field.set_combo_lane_fx_enabled(false)
 		var receptors: Array = note_field.get("_receptors")
 		var material_100 := (receptors[0] as Sprite2D).material as ShaderMaterial
 		var fill_100 := float(material_100.get_shader_parameter("gold_fill")) \
 			if material_100 != null else 0.0
 		note_field.update_field(0.0, 8.0)
-		_check(note_field.is_combo_gold_fx_enabled(),
-			"箭头金化超过 5 秒仍保持，不再由定时器关闭")
+		_check(note_field.is_combo_gold_fx_enabled() \
+			and not note_field.is_combo_lane_fx_enabled() \
+			and not note_field.combo_lane_fx_visible_for_test(),
+			"50 Combo 箭头金化超过 5 秒仍保持，且不会提前开启轨道粒子")
+		note_field.set_combo_gold_fx_level(3)
+		var material_300 := (receptors[0] as Sprite2D).material as ShaderMaterial
+		var fill_300 := float(material_300.get_shader_parameter("gold_fill")) \
+			if material_300 != null else 0.0
 		note_field.set_combo_gold_fx_level(7)
 		var material_700 := (receptors[0] as Sprite2D).material as ShaderMaterial
 		var fill_700 := float(material_700.get_shader_parameter("gold_fill")) \
 			if material_700 != null else 0.0
-		_check(int(note_field.combo_gold_fx_level_for_test()) == 7 \
-			and fill_700 >= 0.98 and fill_700 > fill_100,
-			"700 Combo 时整个箭头完成金化", "fill=%.2f→%.2f" % [fill_100, fill_700])
+		_check(int(note_field.combo_gold_fx_level_for_test()) == 3 \
+			and fill_300 > fill_100 and is_equal_approx(fill_700, fill_300),
+			"箭头金化最多增强三档，700 Combo 不再继续加深",
+			"fill=%.2f→%.2f→%.2f" % [fill_100, fill_300, fill_700])
+		note_field.set_combo_lane_fx_enabled(true)
+		_check(int(note_field.combo_lane_fx_count_for_test()) == 7 \
+			and int(note_field.combo_lane_particle_system_count_for_test()) == 14 \
+			and bool(note_field.combo_lane_fx_visible_for_test()),
+			"100 Combo 第二阶段为左手/五踏板/右手七条轨道开启双边金色粒子描边")
 		note_field.set_combo_gold_fx_level(0)
 		_check(not note_field.is_combo_gold_fx_enabled() \
-			and (receptors[0] as Sprite2D).material == null,
-			"Combo 断掉后箭头金化材质立即清理")
+			and (receptors[0] as Sprite2D).material == null \
+			and not bool(note_field.combo_lane_fx_visible_for_test()),
+			"强制清理时箭头金化和七轨粒子描边立即释放")
 
 	# 曲库载入阶段预建并序列化搜索索引；正式搜索只查索引，不再读取谱面元数据。
 	var library = root.get_node("SongLibrary")
@@ -117,16 +135,26 @@ func _initialize() -> void:
 			library.search_progress.connect(_on_search_progress)
 		var results: Array = await library.search_songs_async(source, "凤凰传奇")
 		_check(results.size() == 6, "索引搜索返回全部歌手匹配歌曲", str(results.size()))
+		var language_source := [
+			{"name": "最炫民族风"}, {"name": "アガリ症"},
+			{"name": "다시 만난 세계"}, {"name": "Bad Apple"},
+		]
+		_check(str(library.call("classify_title_language", "最炫民族风")) == "中文" \
+			and str(library.call("classify_title_language", "アガリ症")) == "日文" \
+			and str(library.call("classify_title_language", "다시 만난 세계")) == "韩文" \
+			and str(library.call("classify_title_language", "Bad Apple")) == "英文",
+			"歌名可按中文、日文、韩文、英文自动分类")
+		_check(library.filter_songs_by_title_language(language_source, "日文").size() == 1 \
+			and library.filter_songs_by_title_language(language_source, "韩文").size() == 1,
+			"语言分类可直接过滤歌曲列表，无需重新读取谱面")
 		_check(not _search_progress_samples.is_empty() \
 			and str(_search_progress_samples[-1][2]).contains("索引"),
 			"搜索阶段直接查询已建索引，不再显示逐首建立索引", str(_search_progress_samples))
 
-	# 百连里程碑必须使用短促独立音效，严禁再复用 5.4 秒 Full Combo 音效。
-	var milestone_sound := str(root.get_node("AssetLoader").sound("百连突破音效"))
-	var achievement_sound := str(root.get_node("AssetLoader").sound("结算前成就音效"))
-	_check(not milestone_sound.is_empty() and milestone_sound != achievement_sound \
-		and milestone_sound.ends_with("点击-增益5.mp3"),
-		"百连使用独立短促增益音效，不再复用 Full Combo", milestone_sound)
+	var gameplay_source := FileAccess.get_file_as_string("res://scenes/gameplay/gameplay.gd")
+	_check(not gameplay_source.contains("百连突破音效") \
+		and not gameplay_source.contains("gameplay.combo_milestone."),
+		"百连里程碑已彻底关闭提示音，只保留视觉演出")
 
 	for node in [note_field, milestone_fx]:
 		if is_instance_valid(node):

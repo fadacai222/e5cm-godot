@@ -168,8 +168,6 @@ const RES := {
 	"开始游戏": "冷资源/backsound/开始游戏.mp3",
 	"准备就绪音效": "冷资源/backsound/准备就绪音效.mp3",
 	"结算前成就音效": "冷资源/Buttonsound/全连.mp3",
-	# 1.02 秒短促增益音效，专用于 100/200/300… Combo 里程碑；禁止复用 5.42 秒全连音效。
-	"百连突破音效": "冷资源/Buttonsound/点击-增益5.mp3",
 	"结算音效": "冷资源/backsound/结算音效.mp3",
 	"gameover": "冷资源/backsound/gameover.mp3",
 }
@@ -177,6 +175,11 @@ const RES := {
 const ARROW_SKIN_BASE := "UI-img/游戏界面/箭头"
 const COUPLE_SKIN_BASE := "UI-img/游戏界面/情侣箭头"
 const GRADE_IMG_DIR := "UI-img/游戏界面/结算/评价"
+# 02/03 的击中特效图像字节完全相同，但各自保留独立 JSON 帧表。
+# 运行时只加载一份纹理，发行包也可安全排除 03 的重复 PNG。
+const ATLAS_TEXTURE_ALIASES := {
+	ARROW_SKIN_BASE + "/03/key_effect": ARROW_SKIN_BASE + "/02/key_effect",
+}
 
 
 func abs_path(rel: String) -> String:
@@ -217,8 +220,8 @@ func tex(rel: String) -> Texture2D:
 			_touch_song_texture(path)
 		return cache[path]
 	var texture: Texture2D = null
-	# songs/.gdignore 下的图片是原文件，不允许先走 ResourceLoader；旧 .godot remap
-	# 可能仍声称资源存在，却指向已经删除的 imported 文件，必须直接 Image.load。
+	# 项目资源优先走 Godot 导入产物，确保测试路径与导出包一致，也避免原图直读警告。
+	# 只有外置曲库，或导入缓存缺失/损坏时，才退回原图自救。
 	if not song_texture and path.begins_with("res://") and ResourceLoader.exists(path):
 		texture = load(path) as Texture2D
 	if texture == null and FileAccess.file_exists(path):
@@ -328,7 +331,8 @@ func atlas(rel_dir: String) -> Dictionary:
 		return _atlas_cache[dir]
 	var result := {}
 	var json_path := dir.path_join("skin.json")
-	var png_path := dir.path_join("skin.png")
+	var texture_rel_dir := str(ATLAS_TEXTURE_ALIASES.get(rel_dir, rel_dir))
+	var png_path := abs_path(texture_rel_dir).path_join("skin.png")
 	if FileAccess.file_exists(json_path) and resource_exists(png_path):
 		var sheet := tex(png_path)
 		var data = JSON.parse_string(FileAccess.get_file_as_string(json_path))

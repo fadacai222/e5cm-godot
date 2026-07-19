@@ -76,11 +76,13 @@ func start_match(p_player_count: int) -> void:
 	consume_credits(CREDITS_PER_GAME)
 	player_count = clampi(p_player_count, 1, 2)
 	flow.start_new_match()
+	ProfileStore.clear_mode_progress_preview()
 
 
 ## 结算选"否"/超时回投币时调用
 func reset_flow_state() -> void:
 	flow.start_new_match()
+	ProfileStore.clear_mode_progress_preview()
 	big_mode = ""
 	sub_mode = ""
 	song_select_restore = {}
