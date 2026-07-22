@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -11,27 +12,50 @@ import time
 from pathlib import Path
 from typing import Any
 
-VERSION = "0.9.1"
-FILE_VERSION = "0.9.1.0"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _read_release_version() -> tuple[str, str]:
+    requested = os.environ.get("E5CM_RELEASE_VERSION", "").strip()
+    if not requested:
+        project_text = (PROJECT_ROOT / "project.godot").read_text(encoding="utf-8-sig")
+        match = re.search(r'(?m)^config/version="([^"]+)"$', project_text)
+        if match is None:
+            raise RuntimeError("project.godot 缺少 application/config/version")
+        requested = match.group(1)
+    match = re.fullmatch(r"(?:godot-)?(\d+)\.(\d+)\.(\d+)", requested, re.IGNORECASE)
+    if match is None:
+        raise RuntimeError(f"无效发行版本：{requested}")
+    major, minor, patch = (int(value) for value in match.groups())
+    display_version = f"godot-{major}.{minor}.{patch}"
+    file_version = os.environ.get("E5CM_FILE_VERSION", "").strip() or \
+        f"{major}.{minor}.{patch}.0"
+    if re.fullmatch(r"\d+\.\d+\.\d+\.\d+", file_version) is None:
+        raise RuntimeError(f"无效 Windows 文件版本：{file_version}")
+    return display_version, file_version
+
+
+VERSION, FILE_VERSION = _read_release_version()
 SEED = "20260718-e5cm-release"
 MAX_SONGS_PER_MODE = 4
 MAX_RANDOM_FOLDER_BYTES = 180 * 1024 * 1024
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STAGING_ROOT = PROJECT_ROOT / ".release-staging"
 STAGING_SONGS = STAGING_ROOT / "songs"
 RELEASE_ROOT = PROJECT_ROOT / "release"
 PORTABLE_ROOT = RELEASE_ROOT / "E5CM"
 PORTABLE_SONGS = PORTABLE_ROOT / "songs"
 INDEX_PATH = PROJECT_ROOT / "assets" / "e5cm_runtime" / "song_index.json"
-INDEX_BACKUP = PROJECT_ROOT / ".release-backup" / "original-song_index.json"
-SAMPLE_INDEX = STAGING_ROOT / "release-song_index.json"
+RELEASE_INDEX_NAME = "release-song-index.json"
+SAMPLE_INDEX = STAGING_ROOT / RELEASE_INDEX_NAME
+PORTABLE_INDEX = PORTABLE_ROOT / RELEASE_INDEX_NAME
 SELECTION_MANIFEST = STAGING_ROOT / "release-song-selection.json"
 
 CHART_EXTENSIONS = {".sm", ".ssc", ".json"}
 AUDIO_EXTENSIONS = {".mp3", ".ogg"}
 PATH_FIELDS = ("sm", "mp3", "cover", "video")
 EXPORT_PRESET_PATH = PROJECT_ROOT / "export_presets.cfg"
+PROJECT_SETTINGS_PATH = PROJECT_ROOT / "project.godot"
 EXACT_DUPLICATE_EXPORTS = (
     (
         "assets/video/player_select/003.mp4",
@@ -50,6 +74,53 @@ EXACT_DUPLICATE_EXPORTS = (
         "assets/e5cm_runtime/UI-img/游戏界面/箭头/03/key_effect/skin.png",
     ),
 )
+REQUIRED_CLEAN_EXPORT_EXCLUSIONS = (
+    "songs/**",
+    "assets/e5cm_runtime/songs/**",
+    "assets/e5cm_runtime/song_index.json",
+    ".release-staging/**",
+    "release/**",
+    "tests/**",
+    "tools/**",
+    "tasks/**",
+    "新功能开发计划/**",
+    "assets/rewards/avatar_frames.svg",
+    "assets/rewards/profile_cards.svg",
+    "*.md",
+)
+REQUIRED_RELEASE_SETTINGS = (
+    'config/use_custom_user_dir.release=true',
+    'config/custom_user_dir_name.release="E5CM-PlayerData"',
+)
+ALLOWED_PORTABLE_ROOT_FILES = {
+    "E5CM.exe",
+    "E5CM.pck",
+    "E5CM-Compatibility.bat",
+    RELEASE_INDEX_NAME,
+    "release-song-selection.json",
+    "版本信息.txt",
+    "avcodec-60.dll",
+    "avfilter-9.dll",
+    "avformat-60.dll",
+    "avutil-58.dll",
+    "libgdffmpeg.windows.template_release.x86_64.dll",
+    "swresample-4.dll",
+    "swscale-7.dll",
+}
+FORBIDDEN_PLAYER_DATA_NAMES = {
+    "profile.json",
+    "records.json",
+    "favorites.json",
+    "credits.cfg",
+    "settings.cfg",
+    "rewards_v1.json",
+    "analytics_v1.json",
+    "challenge_state_v1.json",
+    "feature_data",
+    "cache",
+    "ghosts",
+    "shots",
+}
 REQUIRED_EXPORT_EXCLUSIONS = (
     "addons/ffmpeg/**/~libgdffmpeg*",
     "assets/e5cm_runtime/backmovies/003.mp4",
@@ -81,12 +152,27 @@ def file_sha256(path: Path) -> str:
 def verify_release_asset_policy() -> None:
     if not EXPORT_PRESET_PATH.is_file():
         fail(f"导出配置不存在：{EXPORT_PRESET_PATH}")
+    if not PROJECT_SETTINGS_PATH.is_file():
+        fail(f"项目配置不存在：{PROJECT_SETTINGS_PATH}")
     preset_text = EXPORT_PRESET_PATH.read_text(encoding="utf-8")
     missing_exclusions = [
         path for path in REQUIRED_EXPORT_EXCLUSIONS if path not in preset_text
     ]
     if missing_exclusions:
         fail("导出配置缺少资源去重项：" + ", ".join(missing_exclusions))
+    missing_clean_exclusions = [
+        path for path in REQUIRED_CLEAN_EXPORT_EXCLUSIONS if path not in preset_text
+    ]
+    if missing_clean_exclusions:
+        fail("导出配置可能夹带开发/测试资料：" + ", ".join(missing_clean_exclusions))
+    if 'custom_features="e5cm_release"' not in preset_text:
+        fail("Windows 导出未注入 e5cm_release 正式版标记。")
+    project_text = PROJECT_SETTINGS_PATH.read_text(encoding="utf-8-sig")
+    missing_release_settings = [
+        setting for setting in REQUIRED_RELEASE_SETTINGS if setting not in project_text
+    ]
+    if missing_release_settings:
+        fail("正式版未隔离玩家数据目录：" + ", ".join(missing_release_settings))
 
     for canonical_relative, duplicate_relative in EXACT_DUPLICATE_EXPORTS:
         canonical = PROJECT_ROOT / canonical_relative
@@ -100,7 +186,34 @@ def verify_release_asset_policy() -> None:
                 "原本重复的发行资源已经分叉，禁止继续排除副本："
                 f"{canonical_relative} != {duplicate_relative}"
             )
-    log(f"RELEASE_ASSET_POLICY_VERIFIED duplicates={len(EXACT_DUPLICATE_EXPORTS)}")
+    log(
+        "RELEASE_ASSET_POLICY_VERIFIED "
+        f"duplicates={len(EXACT_DUPLICATE_EXPORTS)} clean_export=true isolated_user_data=true"
+    )
+
+
+def verify_clean_portable_layout(root: Path) -> None:
+    if not root.is_dir():
+        fail(f"发行目录不存在：{root}")
+    unexpected: list[str] = []
+    forbidden: list[str] = []
+    for item in root.iterdir():
+        name_lower = item.name.lower()
+        if item.is_dir():
+            if name_lower != "songs":
+                unexpected.append(item.name + "/")
+            if name_lower in FORBIDDEN_PLAYER_DATA_NAMES:
+                forbidden.append(item.name + "/")
+            continue
+        if item.name not in ALLOWED_PORTABLE_ROOT_FILES:
+            unexpected.append(item.name)
+        if name_lower in FORBIDDEN_PLAYER_DATA_NAMES:
+            forbidden.append(item.name)
+    if forbidden:
+        fail("发行目录包含玩家存档/测试资料：" + ", ".join(sorted(forbidden)))
+    if unexpected:
+        fail("发行目录包含未审核文件：" + ", ".join(sorted(unexpected)))
+    log("PORTABLE_LAYOUT_CLEAN player_data=empty root_allowlist=passed")
 
 
 def directory_size(path: Path) -> int:
@@ -218,18 +331,15 @@ def copy_selected_songs(song_root: Path, selection: dict[str, dict[str, Any]], d
 
 
 def locate_full_index() -> Path:
-    if INDEX_BACKUP.is_file():
-        try:
-            data = json.loads(INDEX_BACKUP.read_text(encoding="utf-8"))
-            if int(data.get("songVariantCount", 0)) > 1000:
-                return INDEX_BACKUP
-        except (OSError, json.JSONDecodeError):
-            pass
     if INDEX_PATH.is_file():
-        data = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
-        if int(data.get("songVariantCount", 0)) > 1000:
-            return INDEX_PATH
-    fail("找不到完整 song_index.json，无法生成精选发行索引。")
+        try:
+            data = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+            if int(data.get("songVariantCount", 0)) > 1000 \
+                    and not str(data.get("releaseVersion", "")):
+                return INDEX_PATH
+        except (OSError, json.JSONDecodeError) as exc:
+            fail(f"完整 song_index.json 无法解析：{exc}")
+    fail("找不到完整开发 song_index.json，请先运行 tools/build_song_index.gd 重建。")
 
 
 def rewrite_song_path(value: Any) -> Any:
@@ -352,9 +462,11 @@ def generate_brand_icon() -> None:
     branding.mkdir(parents=True, exist_ok=True)
     png_target = branding / "e5cm_icon.png"
     ico_target = branding / "e5cm.ico"
+    if png_target.is_file() and ico_target.is_file():
+        return
     magick = shutil.which("magick.exe") or shutil.which("magick")
     if not magick:
-        fail("未找到 ImageMagick magick.exe，无法生成游戏 Logo 图标。")
+        fail("未找到 ImageMagick magick.exe，无法生成缺失的游戏 Logo 图标。")
     common = [
         magick,
         str(source),
@@ -365,18 +477,20 @@ def generate_brand_icon() -> None:
         "-extent",
         "1162x1162",
     ]
-    subprocess.run(common + ["-resize", "512x512", str(png_target)], check=True)
-    subprocess.run(
-        common
-        + [
-            "-resize",
-            "256x256",
-            "-define",
-            "icon:auto-resize=256,128,64,48,32,16",
-            str(ico_target),
-        ],
-        check=True,
-    )
+    if not png_target.is_file():
+        subprocess.run(common + ["-resize", "512x512", str(png_target)], check=True)
+    if not ico_target.is_file():
+        subprocess.run(
+            common
+            + [
+                "-resize",
+                "256x256",
+                "-define",
+                "icon:auto-resize=256,128,64,48,32,16",
+                str(ico_target),
+            ],
+            check=True,
+        )
 
 
 def prepare() -> None:
@@ -415,18 +529,20 @@ def prepare() -> None:
     SELECTION_MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     SAMPLE_INDEX.write_text(json.dumps(release_index, ensure_ascii=False), encoding="utf-8")
 
-    INDEX_BACKUP.parent.mkdir(parents=True, exist_ok=True)
-    if not INDEX_BACKUP.is_file() and INDEX_PATH.is_file():
-        shutil.copy2(INDEX_PATH, INDEX_BACKUP)
-    shutil.copy2(SAMPLE_INDEX, INDEX_PATH)
+    # 精选索引只作为 EXE 同目录的发行侧车文件，绝不覆盖开发用完整索引。
+    shutil.copy2(SAMPLE_INDEX, PORTABLE_INDEX)
     generate_brand_icon()
 
     shutil.copytree(STAGING_SONGS, PORTABLE_SONGS)
     shutil.copy2(SELECTION_MANIFEST, PORTABLE_ROOT / "release-song-selection.json")
     (PORTABLE_ROOT / "版本信息.txt").write_text(
         f"E5CM {VERSION}\n每个可玩模式随机保留最多 4 首歌曲。\n"
-        f"抽样种子：{SEED}\n歌曲文件夹：{total_selected}\n",
+        f"抽样种子：{SEED}\n歌曲文件夹：{total_selected}\n"
+        "老显卡、虚拟机或远程桌面启动失败时，可运行 E5CM-Compatibility.bat。\n",
         encoding="utf-8",
+    )
+    (PORTABLE_ROOT / "E5CM-Compatibility.bat").write_bytes(
+        b'@echo off\r\nstart "" "%~dp0E5CM.exe" --rendering-method gl_compatibility\r\n'
     )
     playable_mode_count = sum(1 for item in selection.values() if item["selectedCount"] > 0)
     excluded_modes = [key for key, item in selection.items() if item["selectedCount"] == 0]
@@ -439,13 +555,13 @@ def prepare() -> None:
 
 
 def restore_index() -> None:
-    if not INDEX_BACKUP.is_file():
-        fail("没有找到原始索引备份。")
-    shutil.copy2(INDEX_BACKUP, INDEX_PATH)
-    log("原始完整曲库索引已恢复。")
+    """向旧打包脚本保持兼容；新流程从不替换开发索引。"""
+    full_index = locate_full_index()
+    log(f"开发用完整曲库索引保持不变：{full_index}")
 
 
 def verify_portable() -> None:
+    verify_clean_portable_layout(PORTABLE_ROOT)
     manifest_path = PORTABLE_ROOT / "release-song-selection.json"
     if not manifest_path.is_file():
         fail("发行目录缺少 release-song-selection.json")
@@ -462,7 +578,24 @@ def verify_portable() -> None:
         fail("发行目录缺少 E5CM.exe")
     if not (PORTABLE_ROOT / "E5CM.pck").is_file():
         fail("发行目录缺少 E5CM.pck")
+    if not PORTABLE_INDEX.is_file():
+        fail(f"发行目录缺少 {RELEASE_INDEX_NAME}")
+    if not (PORTABLE_ROOT / "E5CM-Compatibility.bat").is_file():
+        fail("发行目录缺少 OpenGL 兼容模式启动入口")
+    release_index = json.loads(PORTABLE_INDEX.read_text(encoding="utf-8"))
+    verify_release_index(release_index, PORTABLE_SONGS)
     log("PORTABLE_RELEASE_VERIFIED")
+
+
+def prune_obsolete_installers() -> None:
+    """只保留当前版本安装包；兼容清理旧版无版本号命名。"""
+    installer = RELEASE_ROOT / f"E5CM-Setup-{VERSION}.exe"
+    if not installer.is_file():
+        fail(f"当前安装包不存在，拒绝清理旧产物：{installer}")
+    for old_installer in RELEASE_ROOT.glob("E5CM-Setup*.exe"):
+        if old_installer != installer:
+            old_installer.unlink()
+            log(f"REMOVED_OBSOLETE_INSTALLER={old_installer}")
 
 
 def finalize() -> None:
@@ -475,11 +608,7 @@ def finalize() -> None:
     if not smoke_marker.is_file():
         fail("安装包烟测标记不存在，禁止完成发行清理。")
 
-    # 只保留当前正式安装包，避免误点已知有问题的旧版本。
-    for old_installer in RELEASE_ROOT.glob("E5CM-Setup-*.exe"):
-        if old_installer != installer:
-            old_installer.unlink()
-            log(f"REMOVED_OBSOLETE_INSTALLER={old_installer}")
+    prune_obsolete_installers()
 
     project_songs = PROJECT_ROOT / "songs"
     if not project_songs.is_dir():
@@ -499,13 +628,10 @@ def finalize() -> None:
             f"song_folder_count={song_folder_count}"
         )
 
-    # 导出期间临时替换过静态索引；完成前再次强制恢复开发用完整索引。
-    if INDEX_BACKUP.is_file():
-        shutil.copy2(INDEX_BACKUP, INDEX_PATH)
-    else:
-        fail("完整歌曲索引备份不存在，拒绝删除发行暂存目录。")
+    # 新流程从不替换开发索引；完成前仍验证它是完整索引。
+    locate_full_index()
 
-    # 只清理本次构建产生的隐藏暂存；release/ 产物与完整 songs/ 均保留。
+    # 只清理本次构建产生的隐藏暂存；兼容清理旧流程遗留的备份目录。
     for transient in [STAGING_ROOT, PROJECT_ROOT / ".release-backup"]:
         if transient.is_dir():
             shutil.rmtree(transient)
@@ -518,7 +644,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="E5CM release builder")
     parser.add_argument(
         "command",
-        choices=("audit-assets", "prepare", "restore-index", "verify", "finalize"),
+        choices=("audit-assets", "prepare", "restore-index", "verify", "prune-installers", "finalize"),
     )
     args = parser.parse_args()
     try:
@@ -530,6 +656,8 @@ def main() -> int:
             restore_index()
         elif args.command == "verify":
             verify_portable()
+        elif args.command == "prune-installers":
+            prune_obsolete_installers()
         elif args.command == "finalize":
             finalize()
         return 0

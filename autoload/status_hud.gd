@@ -44,9 +44,10 @@ func _renderer_label() -> String:
 func fps_for_display(raw_fps: float) -> float:
 	if raw_fps <= 0.1:
 		return 0.0
-	# Godot 在极轻量菜单里可能瞬时统计出上千 FPS；实际渲染已经被设置上限约束，
-	# HUD 也必须按同一上限显示，避免瞬时采样抖动造成 2000+ 的假象。
-	return minf(raw_fps, float(maxi(1, SettingsStore.max_fps)))
+	# 有帧率上限时按设置值封顶；玩家明确选择“无限制”后显示真实采样。
+	if SettingsStore.max_fps <= 0:
+		return raw_fps
+	return minf(raw_fps, float(SettingsStore.max_fps))
 
 
 func _process(delta: float) -> void:

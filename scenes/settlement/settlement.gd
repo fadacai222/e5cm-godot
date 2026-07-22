@@ -1,4 +1,7 @@
 extends Control
+
+const ChallengeProgressPopupScript = preload("res://ui/challenge_progress_popup.gd")
+const PlayerIdentityViewScript = preload("res://ui/player_identity_view.gd")
 ## 结算场景 —— 布局取自 config/layout/结算场景布局.json（基准1600×900，×1.2 到 1080p）：
 ## panel(115,120,840,840) cover(282,356,206,220) 星级(184,610) 歌名(181,656)
 ## 数值右对齐列 miss(562,356)/good(554,418)/cool(554,484)/perfect(554,548)/combo(554,616)/
@@ -20,11 +23,18 @@ var _settlement_bgm_started := false
 var _grade_target_position := Vector2.ZERO
 var _top_badge_target_position := Vector2.ZERO
 var _new_record_target_position := Vector2.ZERO
+var _analysis_panel: JudgementAnalysisPanel
+var _analysis_button: Button
+var _challenge_popup: Control
+var _challenge_changes: Array = []
+var _challenge_popup_shown := false
+var _settlement_identity: PlayerIdentityView
 
 # 阶段3
 var _p3_type := ""
 var _p3_deadline := 0.0
 var _p3_action := {}
+@onready var _p3_blackout: ColorRect = $Phase3Blackout
 @onready var _p3_prompt: TextureRect = $Phase3Prompt
 @onready var _p3_countdown: Label = $Phase3Countdown
 @onready var _p3_countdown_digits: Control = $Phase3CountdownDigits
@@ -42,6 +52,7 @@ const PHASE2_SEC := 6.8
 var _value_labels := {}
 var exp_panel: Control
 var _upgrade_effect: TextureRect
+var _upgrade_flowers: Array[TextureRect] = []
 var _upgrade_started := false
 var _exp_animation_tweens: Array[Tween] = []
 @onready var _background: TextureRect = $SettlementBackground
@@ -138,6 +149,9 @@ func _ready() -> void:
 	_update_credit_label(GameState.credits)
 	GameState.credits_changed.connect(_update_credit_label)
 	_persist_results()
+	_build_challenge_popup()
+	_build_analysis_ui()
+	_build_settlement_identity()
 	_build_phase3_ui()
 	if bool(payload.get("三把S赠送", false)):
 		_show_three_s_effect()
@@ -145,6 +159,79 @@ func _ready() -> void:
 
 func _update_credit_label(credits: int) -> void:
 	_credit_label.text = "CREDIT：%d/%d" % [maxi(0, credits), GameState.CREDITS_PER_GAME]
+
+
+func _build_challenge_popup() -> void:
+	_challenge_popup = ChallengeProgressPopupScript.new()
+	_challenge_popup.name = "ChallengeProgressPopup"
+	add_child(_challenge_popup)
+
+
+func _build_settlement_identity() -> void:
+	_settlement_identity = PlayerIdentityViewScript.new()
+	_settlement_identity.name = "SettlementPlayerIdentity"
+	_settlement_identity.configure("compact", {
+		"player_tag": "P%d" % int(payload.get("玩家序号", 1)),
+		"show_status": true,
+	})
+	_settlement_identity.position = Vector2(38, 248) if int(payload.get("玩家序号", 1)) == 2 \
+		else Vector2(1490, 248)
+	_settlement_identity.z_index = 80
+	add_child(_settlement_identity)
+
+
+func _build_analysis_ui() -> void:
+	_analysis_button = Button.new()
+	_analysis_button.name = "JudgementAnalysisButton"
+	_analysis_button.text = "判定分析  A"
+	_analysis_button.position = Vector2(1570, 168)
+	_analysis_button.size = Vector2(250, 58)
+	_analysis_button.z_index = 950
+	_analysis_button.visible = false
+	_analysis_button.pressed.connect(_open_analysis)
+	UiKit.skin_arcade_button(_analysis_button, true, false, 21, E5OriginalTheme.CYAN)
+	add_child(_analysis_button)
+
+	_analysis_panel = JudgementAnalysisPanel.new()
+	_analysis_panel.name = "JudgementAnalysisPanel"
+	_analysis_panel.close_requested.connect(func():
+		if _analysis_button != null:
+			_analysis_button.grab_focus())
+	_analysis_panel.training_requested.connect(_on_analysis_training_requested)
+	add_child(_analysis_panel)
+
+
+func _open_analysis() -> void:
+	if _analysis_panel == null or _phase < 2:
+		return
+	var summary: Dictionary = payload.get("analysis_summary", {})
+	if summary.is_empty():
+		return
+	_analysis_panel.open_analysis({
+		"summary": summary,
+		"events": payload.get("analysis_events", []),
+		"trend": payload.get("analysis_trend", {}),
+		"song": payload.get("analysis_song", {}),
+	})
+
+
+func _on_analysis_training_requested(song: Dictionary, config: Dictionary,
+		summary: Dictionary) -> void:
+	if song.is_empty() or config.is_empty():
+		return
+	if _analysis_panel != null:
+		_analysis_panel.close_analysis()
+	AudioDirector.stop_bgm()
+	SceneRouter.change_to("training_setup", {
+		"song": song,
+		"training_config": config,
+		"summary": summary,
+		"source": "settlement_analysis",
+	})
+
+
+func analysis_open_for_test() -> bool:
+	return _analysis_panel != null and _analysis_panel.is_open()
 
 
 func _mk_value(key: String, rect: Rect2, color: Color) -> void:
@@ -161,10 +248,45 @@ func _mk_value(key: String, rect: Rect2, color: Color) -> void:
 	_value_labels[key] = l
 
 
+static func official_progress_eligible_for_payload(data: Dictionary) -> bool:
+	# 兼容旧结算载荷：没有 challenge_eligible 字段时按手动正式局处理；
+	# 新载荷若明确为 false，则不计入正式档案。
+	return (not data.has("challenge_eligible") or bool(data.get("challenge_eligible", false))) \
+		and not bool(data.get("autoplay", false)) \
+		and not bool(data.get("debug_run", false)) \
+		and not bool(data.get("training", false))
+
+
 func _persist_results() -> void:
 	var grade := str(payload.get("评级", "F"))
 	var song_name := str(payload.get("曲目名", ""))
 	var score := int(payload.get("本局最高分", 0))
+	var mode := str(payload.get("mode", "竞速"))
+	var progress := ProfileStore.get_mode_progress(mode)
+	if not official_progress_eligible_for_payload(payload):
+		var existing_record: Dictionary = ProfileStore.get_song_record(str(payload.get("sm_key", "")))
+		var old_best := int(existing_record.get("最高分", 0))
+		_record_result = {
+			"是否新纪录": false,
+			"最高分": old_best,
+			"旧最高分": old_best,
+			"游玩次数": int(existing_record.get("游玩次数", 0)),
+		}
+		_exp_result = {
+			"结算类型": "AUTO / 调试局不计入正式进度",
+			"经验增加值": 0,
+			"正式局总经验": 0,
+			"模式进度": progress,
+			"经验结算": {},
+			"预览缓存": false,
+			"缓存把数": 0,
+			"显示奖励窗": false,
+			"显示升级动画": false,
+		}
+		if GameState.flow.has_method("clear_exp_cache"):
+			GameState.flow.clear_exp_cache()
+		_process_challenge_progress()
+		return
 
 	_record_result = ProfileStore.update_song_record(
 		str(payload.get("sm_key", "")), song_name, score)
@@ -182,23 +304,64 @@ func _persist_results() -> void:
 		stats["最高分曲目"] = song_name
 	ProfileStore.profile["统计"] = stats
 
-	var mode := str(payload.get("mode", "竞速"))
-	var progress := ProfileStore.get_mode_progress(mode)
 	_exp_result = GameState.flow.settle_song_exp(
 		mode, progress, int(payload.get("当前关卡", 1)), grade,
 		int(payload.get("cool数", 0)), int(payload.get("good数", 0)),
 		int(payload.get("miss数", 0)))
+	# 每首歌结束都必须形成正式存档。兼容旧结算结果时，优先取经验结算里的最终进度，
+	# 避免前两把只存在内存预览，退出或崩溃后回到 Lv.1。
+	var persisted_progress: Dictionary = _exp_result.get("模式进度", progress)
 	if bool(_exp_result.get("预览缓存", false)):
-		# 前两把仍按原版规则不写正式等级，但个人中心要实时显示已经缓存的累计经验。
-		var preview_deposit: Dictionary = _exp_result.get("经验结算", {})
-		ProfileStore.set_mode_progress_preview(mode,
-			preview_deposit.get("模式进度", progress))
-		ProfileStore.save_profile()
-	else:
-		ProfileStore.set_mode_progress(mode, _exp_result["模式进度"])
+		var legacy_preview_deposit: Dictionary = _exp_result.get("经验结算", {})
+		persisted_progress = legacy_preview_deposit.get("模式进度", persisted_progress)
+		_exp_result["预览缓存"] = false
+		_exp_result["模式进度"] = persisted_progress
+	ProfileStore.set_mode_progress(mode, persisted_progress)
+	_process_challenge_progress()
+
+
+func _process_challenge_progress() -> void:
+	var run_id := str(payload.get("run_id", "")).strip_edges()
+	if run_id.is_empty():
+		return
+	ChallengeService.ensure_current()
+	var run_result := {
+		"run_id": run_id,
+		"eligible": bool(payload.get("challenge_eligible", false)),
+		"training": false,
+		"autoplay": bool(payload.get("autoplay", false)),
+		"debug": bool(payload.get("debug_run", false)),
+		"mode": str(payload.get("mode", "竞速")),
+		"submode": str(payload.get("submode", "")),
+		"star": int(payload.get("star", 0)),
+		"grade": str(payload.get("评级", "F")),
+		"failed": bool(payload.get("失败", false)),
+		"combo": int(payload.get("本局最大combo", 0)),
+		"miss": int(payload.get("miss数", 0)),
+		"good": int(payload.get("good数", 0)),
+		"accuracy": float(payload.get("百分比数值", 0.0)),
+		"perfect": int(payload.get("perfect数", 0)),
+		"duration_sec": float(payload.get("歌曲时长秒", 0.0)),
+		"chart_hash": str(payload.get("sm_key", "")),
+		"first_play": int(_record_result.get("游玩次数", 0)) == 1,
+		"new_record": bool(_record_result.get("是否新纪录", false)),
+		"random_song": bool(payload.get("random_song", false)),
+		"players": int(payload.get("players", GameState.player_count)),
+		"hidden_mode": str(payload.get("hidden_mode", "关闭")),
+		"track_mode": str(payload.get("track_mode", "正常")),
+		"direction_mode": str(payload.get("direction_mode", "关闭")),
+		"full_combo": bool(payload.get("是否全连", false)),
+		"all_perfect": bool(payload.get("是否全perfect", false)),
+		"completed_hour": int(Time.get_time_dict_from_system().get("hour", -1)),
+	}
+	_challenge_changes = ChallengeService.process_run(run_result)
+	RewardMilestoneService.process_official_run(run_result)
+	payload["challenge_changes"] = _challenge_changes.duplicate(true)
 
 
 func _process(delta: float) -> void:
+	if _analysis_panel != null and _analysis_panel.is_open():
+		return
 	_t += delta
 	_update_settlement_audio()
 	match _phase:
@@ -267,8 +430,14 @@ func _update_phase1() -> void:
 
 func _enter_phase2() -> void:
 	_phase = 2
+	if not _challenge_popup_shown and not _challenge_changes.is_empty() and _challenge_popup != null:
+		_challenge_popup_shown = true
+		_challenge_popup.show_changes(_challenge_changes)
+	if _analysis_button != null:
+		_analysis_button.visible = not (payload.get("analysis_summary", {}) as Dictionary).is_empty()
 	_t = 0.0
 	_upgrade_effect = null
+	_upgrade_flowers.clear()
 	_upgrade_started = false
 	for tween in _exp_animation_tweens:
 		if tween != null and tween.is_valid():
@@ -294,21 +463,23 @@ func _enter_phase2() -> void:
 	window.texture = AssetLoader.tex("UI-img/游戏界面/结算/结算等级小窗/UI_I516.png")
 	window.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	window.stretch_mode = TextureRect.STRETCH_SCALE
-	window.position = Vector2(686.4, 326.4) if int(payload.get("玩家序号", 1)) != 2 \
-		else Vector2(115.2, 326.4)
-	window.size = Vector2(770.4, 386.4)
+	window.position = Vector2(686.4, 294.0) if int(payload.get("玩家序号", 1)) != 2 \
+		else Vector2(115.2, 294.0)
+	window.size = Vector2(770.4, 451.2)
 	window.pivot_offset = window.size * 0.5
 	exp_panel.add_child(window)
 
-	_build_exp_digits(window, int(_exp_result.get("正式局总经验", 0)))
-	if bool(_exp_result.get("预览缓存", false)):
-		var cache_round := int(_exp_result.get("缓存把数", 1))
-		var cache_hint := UiKit.label(window,
-			"第 %d / 3 把经验已缓存 · 第三把统一写入等级" % cache_round,
+	_build_exp_digits(window, int(_exp_result.get("经验增加值",
+		_exp_result.get("正式局总经验", 0))))
+	var settled_round := int(_exp_result.get("缓存把数", 0))
+	if settled_round in [1, 2]:
+		var persistence_hint := UiKit.label(window,
+			"第 %d / 3 把经验已写入存档 · 本局累计 +%d" % [
+				settled_round, int(_exp_result.get("正式局总经验", 0))],
 			16, Vector2(184, 108), Color(0.56, 0.94, 1.0), 2)
-		cache_hint.name = "CachedExperienceHint"
-		cache_hint.size = Vector2(440, 34)
-		cache_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		persistence_hint.name = "ExperiencePersistenceHint"
+		persistence_hint.size = Vector2(440, 34)
+		persistence_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_build_exp_progress(window)
 	window.modulate.a = 0.0
 	window.scale = Vector2(0.86, 0.86)
@@ -361,15 +532,20 @@ func _build_exp_digits(window: Control, total_exp: int) -> void:
 
 func _build_exp_progress(window: Control) -> void:
 	var active_mode := str(payload.get("mode", "竞速"))
+	var active_mode_upper := active_mode.to_upper()
 	var deposit: Dictionary = _exp_result.get("经验结算", {})
 	var style_progress := deposit if active_mode == "花式" else ProfileStore.get_mode_progress("花式")
 	var speed_progress := deposit if active_mode == "竞速" else ProfileStore.get_mode_progress("竞速")
+	var diy_progress := deposit if active_mode_upper == "DIY" else ProfileStore.get_mode_progress("DIY")
 	_build_mode_exp_row(window, "Style", "花式", style_progress,
 		Rect2(37.2, 136.8, 100.8, 38.4), Rect2(158.4, 141.6, 483.6, 27.6),
 		Rect2(158.4, 141.6, 483.6, 27.6), Rect2(652.8, 136.8, 132.0, 40.8))
 	_build_mode_exp_row(window, "Speed", "竞速", speed_progress,
 		Rect2(38.4, 188.4, 96.0, 38.4), Rect2(158.4, 195.6, 483.6, 27.6),
 		Rect2(158.4, 195.6, 483.6, 27.6), Rect2(650.4, 188.4, 132.0, 40.8))
+	_build_mode_exp_row(window, "Diy", "DIY", diy_progress,
+		Rect2(20.4, 240.0, 126.0, 38.4), Rect2(158.4, 247.2, 483.6, 27.6),
+		Rect2(158.4, 247.2, 483.6, 27.6), Rect2(650.4, 240.0, 132.0, 40.8))
 	_build_rank_icon(window)
 	if not bool(_exp_result.get("预览缓存", false)) \
 			and (bool(deposit.get("是否升级", false)) or int(deposit.get("升级次数", 0)) > 0):
@@ -390,6 +566,20 @@ func _build_mode_exp_row(window: Control, prefix: String, mode: String, progress
 	label.name = "%sExperienceLabel" % prefix
 	label.size = label_rect.size
 
+	var is_diy := mode.to_upper() == "DIY"
+	if is_diy:
+		var diy_background := Panel.new()
+		var diy_background_style := StyleBoxFlat.new()
+		diy_background.name = "%sExperienceBarBackground" % prefix
+		diy_background.position = frame_rect.position
+		diy_background.size = frame_rect.size
+		diy_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		diy_background.z_index = 1
+		diy_background_style.bg_color = Color(0.018, 0.012, 0.045, 0.96)
+		diy_background_style.set_corner_radius_all(6)
+		diy_background.add_theme_stylebox_override("panel", diy_background_style)
+		window.add_child(diy_background)
+
 	var clip := Control.new()
 	clip.name = "%sExperienceBarFillClip" % prefix
 	clip.position = fill_rect.position
@@ -398,29 +588,56 @@ func _build_mode_exp_row(window: Control, prefix: String, mode: String, progress
 	clip.visible = true
 	clip.z_index = 2
 	window.add_child(clip)
-	var fill := TextureRect.new()
+	var fill: Control
+	if is_diy:
+		var diy_fill := Panel.new()
+		var diy_fill_style := StyleBoxFlat.new()
+		diy_fill_style.bg_color = Color(0.72, 0.34, 1.0, 1.0)
+		diy_fill_style.set_corner_radius_all(5)
+		diy_fill_style.shadow_color = Color(0.72, 0.34, 1.0, 0.68)
+		diy_fill_style.shadow_size = 7
+		diy_fill.add_theme_stylebox_override("panel", diy_fill_style)
+		fill = diy_fill
+	else:
+		var texture_fill := TextureRect.new()
+		texture_fill.texture = AssetLoader.tex("UI-img/经验条/%s经验-值.png" % mode)
+		texture_fill.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		texture_fill.stretch_mode = TextureRect.STRETCH_SCALE
+		fill = texture_fill
 	fill.name = "%sExperienceBarFill" % prefix
-	fill.texture = AssetLoader.tex("UI-img/经验条/%s经验-值.png" % mode)
-	fill.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	fill.stretch_mode = TextureRect.STRETCH_SCALE
 	fill.size = fill_rect.size
 	fill.visible = true
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	fill.z_index = 1
 	clip.add_child(fill)
 
-	var frame := TextureRect.new()
+	var frame: Control
+	if is_diy:
+		var diy_frame := Panel.new()
+		var diy_frame_style := StyleBoxFlat.new()
+		diy_frame_style.bg_color = Color(0, 0, 0, 0)
+		diy_frame_style.border_color = Color(0.80, 0.56, 1.0, 0.92)
+		diy_frame_style.set_border_width_all(2)
+		diy_frame_style.set_corner_radius_all(6)
+		diy_frame.add_theme_stylebox_override("panel", diy_frame_style)
+		frame = diy_frame
+	else:
+		var texture_frame := TextureRect.new()
+		texture_frame.texture = AssetLoader.tex("UI-img/经验条/%s经验-框.png" % mode)
+		texture_frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		texture_frame.stretch_mode = TextureRect.STRETCH_SCALE
+		frame = texture_frame
 	frame.name = "%sExperienceBarFrame" % prefix
-	frame.texture = AssetLoader.tex("UI-img/经验条/%s经验-框.png" % mode)
-	frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	frame.stretch_mode = TextureRect.STRETCH_SCALE
 	frame.position = frame_rect.position
 	frame.size = frame_rect.size
 	frame.visible = true
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	frame.z_index = 3
 	window.add_child(frame)
 
+	var level_color := Color(0.86, 0.70, 1.0) if is_diy else Color(1.0, 0.95, 0.74)
 	var level_label := UiKit.label(window, "Lv : %d" % level, 26, level_rect.position,
-		Color(1.0, 0.95, 0.74), 2)
+		level_color, 2)
 	level_label.name = "%sLevelLabel" % prefix
 	level_label.size = level_rect.size
 	level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -498,31 +715,77 @@ func _build_rank_icon(window: Control) -> void:
 	icon.texture = AssetLoader.tex(ProfileStore.get_rank_asset_path())
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	icon.position = Vector2(240.0, 220.8)
-	icon.size = Vector2(297.6, 172.8)
+	icon.position = Vector2(265.2, 280.8)
+	icon.size = Vector2(240.0, 139.2)
 	window.add_child(icon)
 	var rank_label := UiKit.label(window, "%d段" % rank, 18,
-		Vector2(32.4, 286.8), Color(0.88, 0.93, 1.0), 2)
+		Vector2(32.4, 342.0), Color(0.88, 0.93, 1.0), 2)
 	rank_label.name = "RankLabel"
 	rank_label.size = Vector2(138.0, 40.8)
 
 
+func _build_upgrade_flower(window: Control, node_name: String, asset_name: String,
+		center_ratio: Vector2, base_size: float, target_rotation: float) -> void:
+	var scale_x := window.size.x / 656.0
+	var scale_y := window.size.y / 340.0
+	var average_scale := (scale_x + scale_y) * 0.5
+	var flower := TextureRect.new()
+	flower.name = node_name
+	flower.texture = AssetLoader.tex(
+		"UI-img/游戏界面/结算/结算等级小窗/升级动画素材/%s.png" % asset_name)
+	flower.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	flower.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	flower.size = Vector2.ONE * base_size * average_scale
+	var target_center := window.size * center_ratio
+	flower.position = target_center - flower.size * 0.5
+	flower.pivot_offset = flower.size * 0.5
+	flower.z_index = 20
+	flower.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	flower.visible = false
+	flower.modulate.a = 0.0
+	flower.scale = Vector2(0.62, 0.62)
+	flower.rotation = target_rotation
+	flower.set_meta("target_position", flower.position)
+	flower.set_meta("target_rotation", target_rotation)
+	window.add_child(flower)
+	_upgrade_flowers.append(flower)
+
+
 func _build_upgrade_effect(window: Control, upgrade_count: int) -> void:
+	# 原版由“升级”主图和四朵花纹组成；花纹必须在主图背后向四角冒出。
+	_build_upgrade_flower(window, "LevelUpFlowerLeftTop", "左上",
+		Vector2(0.33, -0.05), 134.0, -0.08)
+	_build_upgrade_flower(window, "LevelUpFlowerRightTop", "右上",
+		Vector2(0.66, -0.025), 168.0, 0.07)
+	_build_upgrade_flower(window, "LevelUpFlowerLeftBottom", "左下",
+		Vector2(0.32, 0.34), 130.0, -0.06)
+	_build_upgrade_flower(window, "LevelUpFlowerRightBottom", "右下",
+		Vector2(0.655, 0.35), 152.0, 0.06)
+
+	var scale_x := window.size.x / 656.0
+	var scale_y := window.size.y / 340.0
+	var average_scale := (scale_x + scale_y) * 0.5
 	_upgrade_effect = TextureRect.new()
 	_upgrade_effect.name = "LevelUpEffect"
-	_upgrade_effect.texture = AssetLoader.tex("UI-img/游戏界面/结算/结算等级小窗/升级动画素材/升级.png")
+	_upgrade_effect.texture = AssetLoader.tex(
+		"UI-img/游戏界面/结算/结算等级小窗/升级动画素材/升级.png")
 	_upgrade_effect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_upgrade_effect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	_upgrade_effect.position = Vector2(136.8, -158.4)
-	_upgrade_effect.size = Vector2(531.6, 172.8)
+	_upgrade_effect.size = Vector2(358.0, 218.0) * average_scale
+	var main_center := window.size * Vector2(0.52, 0.105)
+	_upgrade_effect.position = main_center - _upgrade_effect.size * 0.5
 	_upgrade_effect.pivot_offset = _upgrade_effect.size * 0.5
+	_upgrade_effect.z_index = 21
+	_upgrade_effect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_upgrade_effect.set_meta("target_position", _upgrade_effect.position)
 	window.add_child(_upgrade_effect)
 	if upgrade_count > 1:
 		var count_label := UiKit.label(_upgrade_effect, "×%d" % upgrade_count, 34,
-			Vector2(410, 102), Color(1.0, 0.88, 0.28), 3)
+			Vector2(_upgrade_effect.size.x - 108.0, _upgrade_effect.size.y - 72.0),
+			Color(1.0, 0.88, 0.28), 3)
 		count_label.name = "MultiLevelCount"
 		count_label.size = Vector2(100, 48)
-	_upgrade_effect.scale = Vector2(0.62, 0.62)
+	_upgrade_effect.scale = Vector2(0.78, 0.78)
 	_upgrade_effect.modulate.a = 0.0
 	_upgrade_effect.visible = false
 
@@ -531,19 +794,55 @@ func _start_upgrade_effect() -> void:
 	if _upgrade_effect == null or not is_instance_valid(_upgrade_effect):
 		return
 	_upgrade_started = true
-	_upgrade_effect.visible = true
-	_upgrade_effect.scale = Vector2(0.62, 0.62)
+	var main_target: Vector2 = _upgrade_effect.get_meta("target_position", _upgrade_effect.position)
+	var main_center := main_target + _upgrade_effect.size * 0.5
+
+	var flower_tween := create_tween().set_parallel(true)
+	_exp_animation_tweens.append(flower_tween)
+	for i in _upgrade_flowers.size():
+		var flower := _upgrade_flowers[i]
+		if not is_instance_valid(flower):
+			continue
+		var target_position: Vector2 = flower.get_meta("target_position", flower.position)
+		var target_rotation := float(flower.get_meta("target_rotation", 0.0))
+		var target_center := target_position + flower.size * 0.5
+		var start_center := main_center.lerp(target_center, 0.38)
+		flower.position = start_center - flower.size * 0.5
+		flower.scale = Vector2(0.56, 0.56)
+		flower.rotation = target_rotation + (-0.16 if i % 2 == 0 else 0.16)
+		flower.modulate.a = 0.0
+		flower.visible = true
+		var delay := float(i) * 0.025
+		flower_tween.tween_property(flower, "position", target_position, 0.42) \
+			.set_delay(delay).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		flower_tween.tween_property(flower, "scale", Vector2.ONE, 0.40) \
+			.set_delay(delay).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		flower_tween.tween_property(flower, "rotation", target_rotation, 0.36) \
+			.set_delay(delay).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		flower_tween.tween_property(flower, "modulate:a", 0.78, 0.24).set_delay(delay)
+
+	_upgrade_effect.position = main_target + Vector2(0.0, 20.0)
+	_upgrade_effect.scale = Vector2(0.78, 0.78)
 	_upgrade_effect.modulate.a = 0.0
-	var tween := create_tween().set_parallel(true)
-	_exp_animation_tweens.append(tween)
-	tween.tween_property(_upgrade_effect, "modulate:a", 1.0, 0.18)
-	tween.tween_property(_upgrade_effect, "scale", Vector2(1.08, 1.08), 0.28) \
-		.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-	tween.chain().tween_property(_upgrade_effect, "scale", Vector2.ONE, 0.18) \
+	_upgrade_effect.visible = true
+	var main_tween := create_tween().set_parallel(true)
+	_exp_animation_tweens.append(main_tween)
+	main_tween.tween_property(_upgrade_effect, "position", main_target, 0.30) \
+		.set_delay(0.06).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	main_tween.tween_property(_upgrade_effect, "modulate:a", 1.0, 0.18).set_delay(0.06)
+	main_tween.tween_property(_upgrade_effect, "scale", Vector2(1.08, 1.08), 0.30) \
+		.set_delay(0.06).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	var settle_tween := create_tween()
+	_exp_animation_tweens.append(settle_tween)
+	settle_tween.tween_interval(0.36)
+	settle_tween.tween_property(_upgrade_effect, "scale", Vector2.ONE, 0.18) \
 		.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 
 
 func _build_phase3_ui() -> void:
+	_p3_blackout.color = Color.BLACK
+	_p3_blackout.modulate = Color.WHITE
+	_p3_blackout.visible = false
 	_p3_prompt.visible = false
 	_p3_countdown.visible = false
 	_p3_countdown_digits.visible = false
@@ -602,6 +901,9 @@ func _render_countdown_digits(value: int) -> void:
 func _enter_phase3() -> void:
 	if exp_panel != null:
 		exp_panel.visible = false
+	# NEXT STAGE/继续挑战属于独立黑场，不再透明叠在结算画面上。
+	_p3_blackout.modulate = Color.WHITE
+	_p3_blackout.visible = true
 	_phase = 3
 	_t = 0.0
 	var round_n := int(payload.get("当前关卡", 1))
@@ -743,6 +1045,15 @@ func _execute(action: Dictionary) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _analysis_panel != null and _analysis_panel.is_open():
+		if _analysis_panel.handle_input(event):
+			get_viewport().set_input_as_handled()
+		return
+	if _phase >= 2 and event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode == KEY_A:
+		_open_analysis()
+		get_viewport().set_input_as_handled()
+		return
 	if _phase < 3:
 		if event.is_action_pressed("pedal_confirm") or event.is_action_pressed("ui_accept"):
 			if _phase == 1:

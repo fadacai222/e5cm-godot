@@ -38,25 +38,32 @@ func _initialize() -> void:
 	root.get_node("GameState").persist_credits = false
 
 	var game_state := root.get_node("GameState")
-	game_state.big_mode = "竞速"
-	game_state.sub_mode = "club"
+	game_state.big_mode = "DIY"
+	game_state.sub_mode = "社区竞速"
 	game_state.credits = 6
-	root.get_node("SceneRouter").payload = {"filter_style": "双踏板", "filter_star": 8}
+	root.get_node("SceneRouter").payload = {
+		"filter_style": "", "filter_star": 0,
+		"filter_speed": "variable",
+	}
 
 	var inst: Node = load("res://scenes/song_select/song_select.tscn").instantiate()
 	root.add_child(inst)
+	var load_deadline := Time.get_ticks_msec() + 60000
+	while bool(inst.get("_song_load_pending")) and Time.get_ticks_msec() < load_deadline:
+		await process_frame
 	for i in 3:
 		await process_frame
 
 	var panel := inst.get_node_or_null("FilterPanel")
 	_check(panel != null, "筛选面板已接入选歌场景")
-	_check(str(inst.get("filter_style")) == "双踏板" and int(inst.get("filter_star")) == 8,
-		"从载荷恢复玩法和星级筛选")
+	_check(str(inst.get("filter_style")).is_empty() and int(inst.get("filter_star")) == 0
+		and str(inst.get("filter_speed")) == "variable",
+		"从载荷恢复变速谱筛选")
 	var shown_songs: Array = inst.get("songs")
 	_check(not shown_songs.is_empty(), "恢复筛选后仍有匹配歌曲")
 	_check(shown_songs.all(func(song):
-		return str(song.get("style", "")) == "双踏板" and int(song.get("star", 0)) == 8),
-		"列表实际应用组合筛选")
+		return bool((song.get("speed_profile", {}) as Dictionary).get("variable", false))),
+		"列表实际应用变速谱筛选")
 
 	if panel != null and inst.has_method("_on_slot_filter"):
 		inst.call("_on_slot_filter")

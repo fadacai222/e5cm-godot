@@ -1,11 +1,14 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
-    [string]$ProjectRoot = 'C:\Users\admin\Desktop\e5cm-godot',
+    [string]$ProjectRoot = '',
     [string]$EvidenceName = 'runtime-assets-20260717'
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    $ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+}
 
 $runtimeRoot = Join-Path $ProjectRoot 'assets\e5cm_runtime'
 $evidenceRoot = Join-Path $ProjectRoot ('parity\resource_migration\' + $EvidenceName)

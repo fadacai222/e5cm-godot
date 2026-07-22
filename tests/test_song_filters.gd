@@ -21,11 +21,13 @@ func _initialize() -> void:
 		"submode": "测试曲包",
 	}
 	var ten_columns := "0000000000\n1000000000"
+	var normal_speed := SongLibraryScript.build_speed_profile([[0.0, 120.0]])
+	var extreme_speed := SongLibraryScript.build_speed_profile([[0.0, 120.0], [16.0, 600.0]])
 	var candidates := [
 		{"charttype": "hard", "description": "level12", "difficulty": "level12",
-			"meter": "9", "notes": ten_columns},
+			"meter": "9", "notes": ten_columns, "speed_profile": extreme_speed},
 		{"charttype": "single", "description": "level7", "difficulty": "level7",
-			"meter": "6", "notes": ten_columns},
+			"meter": "6", "notes": ten_columns, "speed_profile": normal_speed},
 		{"charttype": "lover1", "description": "level5", "difficulty": "level5",
 			"meter": "4", "notes": ten_columns},
 		{"charttype": "lover2", "description": "level5", "difficulty": "level5",
@@ -40,6 +42,9 @@ func _initialize() -> void:
 		"复合谱优先读取 level 星级", str(variants))
 	_check(str(variants[0]["sm_key"]).ends_with("::charttype=hard"),
 		"复合谱记录键包含 charttype", str(variants[0]))
+	_check(bool((variants[0].get("speed_profile", {}) as Dictionary).get("extreme", false))
+		and not bool((variants[1].get("speed_profile", {}) as Dictionary).get("variable", true)),
+		"复合谱每个 charttype 保留自己的局部 BPM 变速特征", str(variants))
 
 	var songs := [
 		{"name": "A", "style": "疯狂", "star": 12},

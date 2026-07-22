@@ -28,6 +28,7 @@ func _ready() -> void:
 	_previous.mouse_exited.connect(_page_hover.bind(_previous, false))
 	_next.mouse_entered.connect(_page_hover.bind(_next, true))
 	_next.mouse_exited.connect(_page_hover.bind(_next, false))
+	set_process(false)
 	call_deferred("_resolve_runtime_nodes")
 
 
@@ -35,14 +36,17 @@ func _resolve_runtime_nodes() -> void:
 	_detail = _host.get("detail") as Control
 	_filter = _host.get("filter_panel") as Control
 	_esc_menu = _host.get("esc_menu") as CanvasLayer
-	_refresh_page_buttons()
+	for overlay in [_detail, _filter, _esc_menu]:
+		if is_instance_valid(overlay) and not overlay.visibility_changed.is_connected(refresh):
+			overlay.visibility_changed.connect(refresh)
+	refresh()
 
 
-func _process(_delta: float) -> void:
+func refresh() -> void:
 	if _detail == null or _filter == null or _esc_menu == null:
-		_resolve_runtime_nodes()
-	else:
-		_refresh_page_buttons()
+		call_deferred("_resolve_runtime_nodes")
+		return
+	_refresh_page_buttons()
 
 
 func _refresh_page_buttons() -> void:

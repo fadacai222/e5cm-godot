@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="400" viewBox="0 0 1600 400">
+  <defs>
+    <filter id="glow-cyan" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="glow-pink" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="glow-gold" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <linearGradient id="silver" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f8fbff"/><stop offset="0.45" stop-color="#79889d"/><stop offset="1" stop-color="#e8edf4"/></linearGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#8ef6ff"/><stop offset="0.45" stop-color="#00d9ff"/><stop offset="1" stop-color="#0b7fd8"/></linearGradient>
+    <linearGradient id="pink" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffb5ff"/><stop offset="0.45" stop-color="#ff42da"/><stop offset="1" stop-color="#8f32ff"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff6ac"/><stop offset="0.35" stop-color="#ffd13f"/><stop offset="0.75" stop-color="#d98b00"/><stop offset="1" stop-color="#fff0a0"/></linearGradient>
+  </defs>
+
+  <!-- 0 COMMON / clean silver -->
+  <g transform="translate(0 0)">
+    <path d="M38 57h42l15-16h210l15 16h42l18 19v48l-18 19h-42l-15 16H95l-15-16H38l-18-19V76z" fill="#06101c" fill-opacity=".94" stroke="url(#silver)" stroke-width="4"/>
+    <path d="M55 70h65l8-8h144l8 8h65l10 10v40l-10 10h-65l-8 8H128l-8-8H55l-10-10V80z" fill="none" stroke="#dbe7f7" stroke-opacity=".6" stroke-width="2"/>
+    <path d="M20 86h18M362 86h18M20 114h18M362 114h18" stroke="#8fa0b5" stroke-width="3"/>
+    <path d="M186 41l14-11 14 11-14 11zM186 159l14 11 14-11-14-11z" fill="#dce8f7"/>
+  </g>
+
+  <!-- 1 COMMON / angular silver -->
+  <g transform="translate(400 0)">
+    <path d="M32 65l28-24h75l12 12h106l12-12h75l28 24-12 35 12 35-28 24h-75l-12-12H147l-12 12H60l-28-24 12-35z" fill="#07111f" fill-opacity=".96" stroke="url(#silver)" stroke-width="4"/>
+    <path d="M60 72h55l12-12h146l12 12h55l9 28-9 28h-55l-12 12H127l-12-12H60l-9-28z" fill="none" stroke="#91a1b6" stroke-width="2"/>
+    <path d="M92 52l10 12-10 12-10-12zM308 52l10 12-10 12-10-12z" fill="#f0f5fb"/>
+  </g>
+
+  <!-- 2 RARE / cyan precision -->
+  <g transform="translate(800 0)" filter="url(#glow-cyan)">
+    <path d="M25 68l22-28h94l16 14h86l16-14h94l22 28-16 32 16 32-22 28h-94l-16-14h-86l-16 14H47l-22-28 16-32z" fill="#03131f" fill-opacity=".96" stroke="url(#cyan)" stroke-width="5"/>
+    <path d="M56 73h73l14-13h114l14 13h73l12 27-12 27h-73l-14 13H143l-14-13H56l-12-27z" fill="none" stroke="#5ff4ff" stroke-width="2"/>
+    <path d="M185 42l15-22 15 22-15 13zM185 158l15 22 15-22-15-13z" fill="#2de9ff"/>
+    <circle cx="200" cy="100" r="5" fill="#fff"/><circle cx="200" cy="100" r="13" fill="none" stroke="#49efff" stroke-width="2"/>
+  </g>
+
+  <!-- 3 RARE / waveform -->
+  <g transform="translate(1200 0)" filter="url(#glow-cyan)">
+    <path d="M25 70l28-28h86l14 14h94l14-14h86l28 28-13 30 13 30-28 28h-86l-14-14h-94l-14 14H53l-28-28 13-30z" fill="#031422" fill-opacity=".96" stroke="url(#cyan)" stroke-width="5"/>
+    <path d="M52 100h22l8-19 10 38 11-62 12 86 12-57 11 28 10-14h104l8-19 10 38 11-62 12 86 12-57 11 28 10-14h22" fill="none" stroke="#53f1ff" stroke-width="3"/>
+    <path d="M192 40l8-18 8 18 18 8-18 8-8 18-8-18-18-8z" fill="#5df4ff"/>
+  </g>
+
+  <!-- 4 EPIC / magenta wings -->
+  <g transform="translate(0 200)" filter="url(#glow-pink)">
+    <path d="M15 102l38-42 60 11 24-31h126l24 31 60-11 38 42-38 38-60-10-24 30H137l-24-30-60 10z" fill="#160724" fill-opacity=".96" stroke="url(#pink)" stroke-width="5"/>
+    <path d="M47 76l-24 26 36-8 25 14-24 13-37-6 26 27 52-13M353 76l24 26-36-8-25 14 24 13 37-6-26 27-52-13" fill="none" stroke="#ff69e6" stroke-width="4"/>
+    <path d="M180 41l20-26 20 26-20 20zM183 159l17 22 17-22-17-15z" fill="#ff54df"/>
+  </g>
+
+  <!-- 5 EPIC / crystal challenge -->
+  <g transform="translate(400 200)" filter="url(#glow-pink)">
+    <path d="M22 80l40-36h72l18 20h96l18-20h72l40 36-18 20 18 20-40 36h-72l-18-20h-96l-18 20H62l-40-36 18-20z" fill="#140821" fill-opacity=".96" stroke="url(#pink)" stroke-width="5"/>
+    <path d="M68 67h58l18 18h112l18-18h58l18 17-15 16 15 16-18 17h-58l-18-18H144l-18 18H68l-18-17 15-16-15-16z" fill="none" stroke="#d684ff" stroke-width="2"/>
+    <path d="M200 20l23 24-23 24-23-24zM68 100l14-16 14 16-14 16zM332 100l-14-16-14 16 14 16z" fill="#ff5ee6"/>
+  </g>
+
+  <!-- 6 LEGENDARY / crown -->
+  <g transform="translate(800 200)" filter="url(#glow-gold)">
+    <path d="M12 111l35-50 60 10 25-35h136l25 35 60-10 35 50-38 42-61-13-24 30H135l-24-30-61 13z" fill="#160f02" fill-opacity=".97" stroke="url(#gold)" stroke-width="6"/>
+    <path d="M39 111l46-18 38 18-42 18zM361 111l-46-18-38 18 42 18z" fill="#f6b813"/>
+    <path d="M170 44l10-28 20 20 20-20 10 28-30 20z" fill="url(#gold)" stroke="#fff2a8" stroke-width="2"/>
+    <path d="M132 143h136" stroke="#ffd43f" stroke-width="3"/>
+  </g>
+
+  <!-- 7 LEGENDARY / sovereign wings -->
+  <g transform="translate(1200 200)" filter="url(#glow-gold)">
+    <path d="M18 98l55-55 67 31 18-32h84l18 32 67-31 55 55-42 25 38 35-85-14-25 25H132l-25-25-85 14 38-35z" fill="#171001" fill-opacity=".97" stroke="url(#gold)" stroke-width="6"/>
+    <path d="M55 79l55 22-57 11 62 14-79 10M345 79l-55 22 57 11-62 14 79 10" fill="none" stroke="#ffcf35" stroke-width="5"/>
+    <path d="M200 17l18 25-18 25-18-25z" fill="#fff1a1"/><path d="M200 35l8 9-8 9-8-9z" fill="#d98500"/>
+  </g>
+</svg>

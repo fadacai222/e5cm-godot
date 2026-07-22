@@ -9,6 +9,8 @@ extends Control
 const FilterPanelScript := preload("res://scenes/song_select/filter_panel.gd")
 const SongCardGlassScript := preload("res://scenes/song_select/song_card_glass.gd")
 const NeonSearchIconScript := preload("res://ui/neon_search_icon.gd")
+const FeatureQuickAccessRailScript := preload("res://ui/feature_quick_access_rail.gd")
+const PlayerIdentityViewScript := preload("res://ui/player_identity_view.gd")
 
 const CARDS_PER_PAGE := 8
 const COLS := 4
@@ -29,6 +31,8 @@ const TOP_BADGE_HEIGHT_RATIO := 0.45
 const TOP_BADGE_SCALE := 1.10
 const TOP_BADGE_STRETCH_X := 1.30
 const SEARCH_LANGUAGE_OPTIONS := ["全部", "中文", "日文", "韩文", "英文"]
+const LOADING_OVERLAY_DELAY_SECONDS := 0.18
+const SONG_FOLDER_WATCH_INTERVAL_SECONDS := 2.5
 
 var songs: Array = []
 var page := 0
@@ -36,6 +40,7 @@ var selected := 0
 var favorites_mode := false
 var filter_style := ""
 var filter_star := 0
+var filter_speed := SongLibrary.SPEED_FILTER_ALL
 var search_keyword := ""
 var search_language := "全部"
 
@@ -56,6 +61,10 @@ var _loading_overlay: Control
 var _loading_bar: ProgressBar
 var _loading_status: Label
 var _loading_percent: Label
+var _song_load_pending := false
+var _song_load_generation := 0
+var _song_folder_watch: Timer
+var _external_song_refresh_running := false
 var _search_overlay: Control
 var _search_input: LineEdit
 var _search_result_hint: Label
@@ -64,7 +73,6 @@ var _search_progress_status: Label
 var _search_progress_percent: Label
 var _search_submit_button: Button
 var _search_clear_button: Button
-var _search_cancel_button: Button
 var _search_language_buttons := {}
 var _search_running := false
 var _search_generation := 0
@@ -77,6 +85,7 @@ var _top_profile_rank: Label
 var _top_profile_level: Label
 var _top_profile_player_tag: Label
 var _top_profile_status_lights: Array[Label] = []
+var _feature_rail: FeatureQuickAccessRail
 
 var _card_frame: Texture2D
 var _star_tex: Texture2D
@@ -90,6 +99,9 @@ func _ready() -> void:
 	var bg := AssetLoader.tex_key("背景_选歌")
 	_background.texture = bg if bg != null else AssetLoader.tex_key("背景_模式")
 	AudioDirector.play_bgm(_song_select_bgm())
+	AudioDirector.apply_music_volume(_preview_player)
+	if not AudioDirector.audio_settings_changed.is_connected(_sync_preview_volume):
+		AudioDirector.audio_settings_changed.connect(_sync_preview_volume)
 
 	_card_frame = AssetLoader.tex("UI-img/选歌界面资源/缩略图小.png")
 	_star_tex = AssetLoader.tex("UI-img/选歌界面资源/小星星/小星星.png")
@@ -103,6 +115,7 @@ func _ready() -> void:
 	var top_bar := $TopBar
 	_build_mode_badges(top_bar)
 	_build_top_profile_badge(top_bar)
+	_build_feature_quick_access(top_bar)
 	if not ProfileStore.profile_changed.is_connected(_refresh_top_profile_badge):
 		ProfileStore.profile_changed.connect(_refresh_top_profile_badge)
 	_setup_bottom_actions()
@@ -126,7 +139,8 @@ func _ready() -> void:
 	add_child(filter_panel)
 
 	esc_menu = EscMenu.new(false)
-	esc_menu.couple_mode = GameState.player_count >= 2
+	# 情侣专用箭头只由“情侣”子模式锁定；普通 2P 只是双人加入，仍允许切换皮肤。
+	esc_menu.couple_mode = _normalize_submode(GameState.sub_mode) == "情侣"
 	add_child(esc_menu)
 	if not SongLibrary.scan_progress.is_connected(_on_song_scan_progress):
 		SongLibrary.scan_progress.connect(_on_song_scan_progress)
@@ -138,6 +152,8 @@ func _ready() -> void:
 		favorites_mode = bool(restore.get("favorites_mode", false))
 		filter_style = str(restore.get("filter_style", "")).strip_edges()
 		filter_star = clampi(int(restore.get("filter_star", 0)), 0, 20)
+		filter_speed = SongLibrary.normalize_speed_filter(str(restore.get(
+			"filter_speed", SongLibrary.SPEED_FILTER_ALL)))
 		search_keyword = str(restore.get("search_keyword", "")).strip_edges()
 		search_language = str(restore.get("search_language", "全部"))
 		if search_language not in SEARCH_LANGUAGE_OPTIONS:
@@ -151,6 +167,46 @@ func _ready() -> void:
 	_refresh_bottom_labels()
 	if restore_detail:
 		_refresh_detail(false)
+	_setup_song_folder_watch()
+
+
+func _setup_song_folder_watch() -> void:
+	_song_folder_watch = Timer.new()
+	_song_folder_watch.name = "SongFolderWatch"
+	_song_folder_watch.wait_time = SONG_FOLDER_WATCH_INTERVAL_SECONDS
+	_song_folder_watch.one_shot = false
+	_song_folder_watch.autostart = true
+	_song_folder_watch.timeout.connect(_on_song_folder_watch_timeout)
+	add_child(_song_folder_watch)
+
+
+func _on_song_folder_watch_timeout() -> void:
+	if _external_song_refresh_running or _song_load_pending or _search_running:
+		return
+	if is_instance_valid(detail) and detail.visible:
+		return
+	# has_cached_songs() 会轻量检查 songs 子模式目录指纹；变化时自动丢弃旧内存缓存。
+	if SongLibrary.has_cached_songs(GameState.big_mode, GameState.sub_mode):
+		return
+	_external_song_refresh_running = true
+	var previous_key := ""
+	var previous_page_songs := _page_songs()
+	if selected >= 0 and selected < previous_page_songs.size():
+		previous_key = str((previous_page_songs[selected] as Dictionary).get("sm_key", ""))
+	await _reload_songs_async()
+	if not is_inside_tree():
+		return
+	if not previous_key.is_empty():
+		for i in songs.size():
+			if str((songs[i] as Dictionary).get("sm_key", "")) == previous_key:
+				page = floori(float(i) / float(CARDS_PER_PAGE))
+				selected = i % CARDS_PER_PAGE
+				break
+	page = clampi(page, 0, maxi(0, _page_count() - 1))
+	selected = clampi(selected, 0, maxi(0, _page_songs().size() - 1))
+	_build_page()
+	_refresh_bottom_labels()
+	_external_song_refresh_running = false
 
 
 func _song_select_bgm() -> String:
@@ -326,7 +382,7 @@ func _on_slot_settings() -> void:
 func _on_slot_filter() -> void:
 	var source := _current_filter_source()
 	filter_panel.open(SongLibrary.available_styles(source), _filter_stars_for_style,
-		filter_style, filter_star)
+		filter_style, filter_star, filter_speed)
 	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
 
 
@@ -334,6 +390,7 @@ func _on_slot_all() -> void:
 	favorites_mode = false
 	filter_style = ""
 	filter_star = 0
+	filter_speed = SongLibrary.SPEED_FILTER_ALL
 	search_keyword = ""
 	search_language = "全部"
 	page = 0
@@ -351,10 +408,25 @@ func _reload_songs_async() -> void:
 		_apply_song_filters()
 		_show_loading_overlay(false)
 		return
-	_show_loading_overlay(true)
+
+	# 磁盘缓存通常在一帧内恢复，先不要无条件弹出全屏进度条；
+	# 只有确实发生首次扫描/目录变更且超过短延迟时才显示，避免每次进选歌都闪屏。
+	_song_load_generation += 1
+	var generation := _song_load_generation
+	_song_load_pending = true
+	_show_loading_overlay(false)
+	get_tree().create_timer(LOADING_OVERLAY_DELAY_SECONDS).timeout.connect(
+		_on_loading_overlay_delay.bind(generation), CONNECT_ONE_SHOT)
 	_source_songs = await SongLibrary.get_songs_async(GameState.big_mode, GameState.sub_mode)
+	_song_load_pending = false
 	_apply_song_filters()
 	_show_loading_overlay(false)
+
+
+func _on_loading_overlay_delay(generation: int) -> void:
+	if not _song_load_pending or generation != _song_load_generation:
+		return
+	_show_loading_overlay(true, false)
 
 
 func _reload_songs() -> void:
@@ -365,7 +437,7 @@ func _reload_songs() -> void:
 
 func _apply_song_filters() -> void:
 	var source := _current_filter_source()
-	var filtered := SongLibrary.filter_songs(source, filter_style, filter_star)
+	var filtered := SongLibrary.filter_songs(source, filter_style, filter_star, filter_speed)
 	filtered = SongLibrary.filter_songs_by_title_language(filtered, search_language)
 	songs = SongLibrary.search_songs(filtered, search_keyword)
 
@@ -376,13 +448,15 @@ func _current_filter_source() -> Array:
 	return _source_songs
 
 
-func _filter_stars_for_style(style: String) -> Array:
-	return SongLibrary.available_stars(_current_filter_source(), style)
+func _filter_stars_for_style(style: String, speed_filter := SongLibrary.SPEED_FILTER_ALL) -> Array:
+	var source := SongLibrary.filter_songs(_current_filter_source(), style, 0, speed_filter)
+	return SongLibrary.available_stars(source)
 
 
-func _on_filter_changed(style: String, star: int) -> void:
+func _on_filter_changed(style: String, star: int, speed_filter: String) -> void:
 	filter_style = style.strip_edges()
 	filter_star = clampi(star, 0, 20)
+	filter_speed = SongLibrary.normalize_speed_filter(speed_filter)
 	page = 0
 	selected = 0
 	_reload_songs()
@@ -398,6 +472,9 @@ func _filter_summary() -> String:
 		parts.append(filter_style)
 	if filter_star > 0:
 		parts.append("%d星" % filter_star)
+	var speed_label := SongLibrary.speed_filter_label(filter_speed)
+	if not speed_label.is_empty():
+		parts.append(speed_label)
 	if search_language != "全部":
 		parts.append("%s歌名" % search_language)
 	if not search_keyword.is_empty():
@@ -455,14 +532,15 @@ func _build_loading_overlay() -> void:
 	_loading_overlay.visible = false
 
 
-func _show_loading_overlay(value: bool) -> void:
+func _show_loading_overlay(value: bool, reset_progress := true) -> void:
 	if _loading_overlay == null:
 		return
 	_loading_overlay.visible = value
 	if value:
-		_loading_bar.value = 0
-		_loading_percent.text = "0%"
-		_loading_status.text = "正在准备曲库…"
+		if reset_progress:
+			_loading_bar.value = 0
+			_loading_percent.text = "0%"
+			_loading_status.text = "正在准备曲库…"
 		move_child(_loading_overlay, get_child_count() - 1)
 		var loading_panel := _loading_overlay.get_node_or_null("LoadingPanel") as Control
 		if loading_panel != null:
@@ -491,12 +569,14 @@ func _build_search_overlay() -> void:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.color = Color(0.0, 0.01, 0.055, 0.84)
 	dim.mouse_filter = Control.MOUSE_FILTER_STOP
+	dim.gui_input.connect(_on_search_mask_input)
 	_search_overlay.add_child(dim)
 
 	var panel := Panel.new()
 	panel.name = "SearchPanel"
 	panel.position = Vector2(490, 250)
 	panel.size = Vector2(940, 580)
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	var transparent := StyleBoxFlat.new()
 	transparent.bg_color = Color(0, 0, 0, 0)
 	transparent.set_border_width_all(0)
@@ -575,32 +655,24 @@ func _build_search_overlay() -> void:
 	_search_submit_button.name = "SearchSubmitButton"
 	_search_submit_button.text = "CONFIRM  搜索并跳转"
 	_search_submit_button.position = Vector2(48, 382)
-	_search_submit_button.size = Vector2(350, 62)
+	_search_submit_button.size = Vector2(414, 62)
 	UiKit.skin_arcade_button(_search_submit_button, true, false, 21)
 	_search_submit_button.pressed.connect(func(): _submit_search(_search_input.text))
 	panel.add_child(_search_submit_button)
 	_search_clear_button = Button.new()
 	_search_clear_button.name = "SearchClearButton"
 	_search_clear_button.text = "RESET  清除搜索"
-	_search_clear_button.position = Vector2(414, 382)
-	_search_clear_button.size = Vector2(230, 62)
+	_search_clear_button.position = Vector2(478, 382)
+	_search_clear_button.size = Vector2(414, 62)
 	UiKit.skin_arcade_button(_search_clear_button, false, false, 20,
 		E5OriginalTheme.MAGENTA)
 	_search_clear_button.pressed.connect(_clear_search)
 	panel.add_child(_search_clear_button)
-	_search_cancel_button = Button.new()
-	_search_cancel_button.name = "SearchCancelButton"
-	_search_cancel_button.text = "BACK  取消"
-	_search_cancel_button.position = Vector2(660, 382)
-	_search_cancel_button.size = Vector2(232, 62)
-	UiKit.skin_arcade_button(_search_cancel_button, false, false, 20)
-	_search_cancel_button.pressed.connect(_cancel_or_close_search)
-	panel.add_child(_search_cancel_button)
 
 	_search_result_hint = UiKit.label(panel, "", 18, Vector2(48, 476),
 		E5OriginalTheme.MAGENTA, 0)
 	_search_result_hint.size = Vector2(844, 34)
-	var footer := UiKit.label(panel, "ENTER 确认    ESC 关闭    搜索结果自动跳到第一页首项", 14,
+	var footer := UiKit.label(panel, "ENTER 确认    ESC / 点击空白关闭    搜索结果自动跳到第一页首项", 14,
 		Vector2(48, 524), E5OriginalTheme.CYAN_SOFT, 0)
 	footer.size = Vector2(844, 28)
 	footer.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -624,7 +696,7 @@ func _set_search_language(language: String) -> void:
 	search_language = language
 	_refresh_search_language_buttons()
 	var filtered := SongLibrary.filter_songs(
-		_current_filter_source(), filter_style, filter_star)
+		_current_filter_source(), filter_style, filter_star, filter_speed)
 	filtered = SongLibrary.filter_songs_by_title_language(filtered, search_language)
 	var label := "全部语言" if search_language == "全部" else "%s歌名" % search_language
 	_search_result_hint.text = "%s共 %d 首，可不输入关键词直接筛选" % [label, filtered.size()]
@@ -637,13 +709,14 @@ func _open_search() -> void:
 		return
 	_search_input.text = search_keyword
 	_refresh_search_language_buttons()
-	var language_source := SongLibrary.filter_songs_by_title_language(
-		_current_filter_source(), search_language)
+	var language_source := SongLibrary.filter_songs(
+		_current_filter_source(), filter_style, filter_star, filter_speed)
+	language_source = SongLibrary.filter_songs_by_title_language(
+		language_source, search_language)
 	_search_result_hint.text = "当前分类共 %d 首可搜索" % language_source.size()
 	_search_progress_bar.value = 0.0
 	_search_progress_percent.text = "0%"
 	_search_progress_status.text = "等待输入关键词或选择语言"
-	_search_cancel_button.text = "取消"
 	_set_search_controls_enabled(true)
 	_search_overlay.visible = true
 	move_child(_search_overlay, get_child_count() - 1)
@@ -656,19 +729,20 @@ func _open_search() -> void:
 
 func _close_search() -> void:
 	if _search_running:
-		return
+		_search_generation += 1
+		_search_running = false
+		_set_search_controls_enabled(true)
+	if _search_input != null:
+		_search_input.release_focus()
 	_search_overlay.visible = false
 
 
-func _cancel_or_close_search() -> void:
-	if _search_running:
-		_search_generation += 1
-		_search_running = false
-		_search_progress_status.text = "搜索已取消"
-		_search_cancel_button.text = "关闭"
-		_set_search_controls_enabled(true)
-		return
-	_close_search()
+func _on_search_mask_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed \
+			and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		accept_event()
+		get_viewport().set_input_as_handled()
+		call_deferred("_close_search")
 
 
 func _set_search_controls_enabled(enabled: bool) -> void:
@@ -719,12 +793,12 @@ func _submit_search(value: String) -> void:
 	_search_generation += 1
 	var generation := _search_generation
 	_set_search_controls_enabled(false)
-	_search_cancel_button.text = "取消搜索"
 	_search_progress_bar.value = 0.0
 	_search_progress_percent.text = "0%"
 	_search_progress_status.text = "正在查询已建立的歌曲索引"
 	_search_result_hint.text = ""
-	var filtered := SongLibrary.filter_songs(_current_filter_source(), filter_style, filter_star)
+	var filtered := SongLibrary.filter_songs(
+		_current_filter_source(), filter_style, filter_star, filter_speed)
 	filtered = SongLibrary.filter_songs_by_title_language(filtered, search_language)
 	var found: Array = await SongLibrary.search_songs_async(filtered, keyword, 8,
 		_search_cancelled.bind(generation))
@@ -736,7 +810,6 @@ func _submit_search(value: String) -> void:
 	selected = 0
 	_search_running = false
 	_set_search_controls_enabled(true)
-	_search_cancel_button.text = "关闭"
 	_build_page()
 	_refresh_bottom_labels()
 	var result_scope := "匹配歌曲" if search_language == "全部" \
@@ -806,24 +879,63 @@ func _build_mode_badges(top_bar: Control) -> void:
 		sub_key, Vector2(x, 0))
 
 
+func _build_feature_quick_access(top_bar: Control) -> void:
+	if top_bar == null:
+		return
+	ChallengeService.ensure_current()
+	ChallengeService.note_game_opened()
+	_feature_rail = FeatureQuickAccessRailScript.new()
+	_feature_rail.position = Vector2(1100, 18)
+	_feature_rail.z_index = 18
+	_feature_rail.training_requested.connect(_toggle_training_entry)
+	_feature_rail.challenge_requested.connect(_open_challenge_from_quick_access)
+	top_bar.add_child(_feature_rail)
+
+
+func _toggle_training_entry() -> void:
+	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
+	if TrainingSession.is_entry_armed():
+		TrainingSession.cancel_entry()
+		UiKit.toast(self, "已退出训练选歌")
+	else:
+		TrainingSession.arm_entry()
+		UiKit.toast(self, "训练室已开启：选择歌曲后进入训练设置")
+	if _feature_rail != null:
+		_feature_rail.refresh()
+
+
+func _open_challenge_from_quick_access() -> void:
+	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
+	if esc_menu != null:
+		esc_menu.open_menu(EscMenu.CHALLENGE_TAB_INDEX)
+
+
 func _build_top_profile_badge(top_bar: Control) -> void:
 	if top_bar == null:
 		return
 	var existing := top_bar.get_node_or_null("SongSelectProfileBadge") as Panel
-	if existing != null:
-		_top_profile_badge = existing
-		_top_profile_avatar = existing.get_node_or_null("Avatar") as TextureRect
-		_top_profile_name = existing.get_node_or_null("Nickname") as Label
-		_top_profile_rank = existing.get_node_or_null("Rank") as Label
-		_top_profile_level = existing.get_node_or_null("Level") as Label
-		_top_profile_player_tag = existing.get_node_or_null("PlayerTag") as Label
-		_top_profile_status_lights.clear()
-		for i in 5:
-			var light := existing.get_node_or_null("StatusLight%d" % i) as Label
-			if light != null:
-				_top_profile_status_lights.append(light)
-		_refresh_top_profile_badge()
-		return
+	if existing == null:
+		var identity: PlayerIdentityView = PlayerIdentityViewScript.new()
+		identity.name = "SongSelectProfileBadge"
+		identity.position = Vector2(1500, 18)
+		identity.z_index = 12
+		identity.configure("compact", {"player_tag": "1P", "show_status": true})
+		top_bar.add_child(identity)
+		existing = identity
+	_top_profile_badge = existing
+	_top_profile_avatar = existing.get_node_or_null("Avatar") as TextureRect
+	_top_profile_name = existing.get_node_or_null("Nickname") as Label
+	_top_profile_rank = existing.get_node_or_null("Rank") as Label
+	_top_profile_level = existing.get_node_or_null("Level") as Label
+	_top_profile_player_tag = existing.get_node_or_null("PlayerTag") as Label
+	_top_profile_status_lights.clear()
+	for i in 5:
+		var light := existing.get_node_or_null("StatusLight%d" % i) as Label
+		if light != null:
+			_top_profile_status_lights.append(light)
+	if existing.has_method("refresh"):
+		existing.call("refresh")
+	return
 
 	_top_profile_badge = Panel.new()
 	_top_profile_badge.name = "SongSelectProfileBadge"
@@ -959,6 +1071,9 @@ func _build_top_profile_badge(top_bar: Control) -> void:
 func _refresh_top_profile_badge() -> void:
 	if not is_instance_valid(_top_profile_badge):
 		return
+	if _top_profile_badge.has_method("refresh"):
+		_top_profile_badge.call("refresh")
+		return
 	var avatar_path := str(ProfileStore.profile.get("头像文件", ""))
 	var avatar_texture := AssetLoader.tex(avatar_path) if not avatar_path.is_empty() else null
 	if avatar_texture == null:
@@ -1062,6 +1177,7 @@ func _build_page() -> void:
 		selected = 0
 		_preview_timer.stop()
 		_raise_runtime_overlays()
+		$UiCoordinator.refresh()
 		return
 	for i in page_songs.size():
 		var s: Dictionary = page_songs[i]
@@ -1191,6 +1307,7 @@ func _build_page() -> void:
 	# 只保留当前页和最近翻过页面的少量封面，避免浏览曲库后内存持续增长。
 	AssetLoader.trim_song_texture_cache(visible_cover_paths)
 	_raise_runtime_overlays()
+	$UiCoordinator.refresh()
 
 
 func _build_card_mode_badge(card: Control, style: String) -> void:
@@ -1347,6 +1464,10 @@ func _apply_selection() -> void:
 	_preview_timer.start(0.35)
 
 
+func _sync_preview_volume() -> void:
+	AudioDirector.apply_music_volume(_preview_player)
+
+
 func _start_preview() -> void:
 	var page_songs := _page_songs()
 	if selected >= page_songs.size():
@@ -1367,6 +1488,7 @@ func _start_preview() -> void:
 	if is_nan(sample_start) or sample_start < 0.0:
 		sample_start = 0.0
 	AudioDirector.stop_bgm()
+	AudioDirector.apply_music_volume(_preview_player)
 	_preview_player.play(sample_start)
 
 
@@ -1386,7 +1508,7 @@ func _refresh_detail(animate: bool) -> void:
 	var s: Dictionary = page_songs[selected]
 	var key := str(s["sm_key"])
 	detail.show_song(s, ProfileStore.get_song_record(key),
-		ProfileStore.favorites.has(key), animate)
+		ProfileStore.favorites.has(key), animate, not favorites_mode)
 
 
 func _detail_step(step: int) -> void:
@@ -1395,6 +1517,8 @@ func _detail_step(step: int) -> void:
 
 
 func _on_detail_favorite() -> void:
+	if favorites_mode:
+		return
 	_toggle_favorite()
 	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
 	_refresh_detail(false)
@@ -1444,12 +1568,11 @@ func _start_song() -> void:
 		prepared_audio = _preview_player.stream
 	_preview_generation += 1
 	_preview_player.stop()
-	# 原版大图二次确认只播放 backsound/开始游戏.mp3，不复用普通按钮音。
-	AudioDirector.play_sfx(AssetLoader.sound("开始游戏"), "song_select.start_game")
 
 	GameState.song_select_restore = {
 		"page": page, "selected": selected, "favorites_mode": favorites_mode,
 		"detail": detail.is_open(), "filter_style": filter_style, "filter_star": filter_star,
+		"filter_speed": filter_speed,
 		"search_keyword": search_keyword, "search_language": search_language,
 	}
 	var sub := GameState.sub_mode
@@ -1461,13 +1584,20 @@ func _start_song() -> void:
 	var prefer_double := int(s.get("columns", 5)) >= 10 if is_json else (
 		sub.to_lower().contains("club") or style == "双踏板" or couple \
 		or GameState.player_count >= 2)
-	SceneRouter.change_to("loading", {
+	var start_payload := {
 		"sm": s["sm"], "mp3": s["mp3"], "cover": s["cover"], "name": s["name"],
 		"star": s["star"], "mode": GameState.big_mode, "submode": sub,
 		"sm_key": s["sm_key"], "prefer_double": prefer_double, "couple": couple,
 		"target_charttype": str(s.get("charttype", "")), "style": style,
-		"audio_stream": prepared_audio,
-	})
+		"bpm": float(s.get("bpm", 0.0)), "audio_stream": prepared_audio,
+	}
+	if TrainingSession.is_entry_armed():
+		AudioDirector.play_sfx(AssetLoader.sound("按钮音效"), "song_select.open_training")
+		SceneRouter.change_to("training_setup", {"song": start_payload})
+		return
+	# 原版大图二次确认只播放 backsound/开始游戏.mp3，不复用普通按钮音。
+	AudioDirector.play_sfx(AssetLoader.sound("开始游戏"), "song_select.start_game")
+	SceneRouter.change_to("loading", start_payload)
 
 
 func _back_to_submode() -> void:
@@ -1492,6 +1622,11 @@ func reselect_target_for_test() -> String:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _search_overlay != null and _search_overlay.visible:
+		if event.is_action_pressed("ui_cancel"):
+			_close_search()
+			get_viewport().set_input_as_handled()
+		return
 	if filter_panel.is_open():
 		if event.is_action_pressed("ui_cancel"):
 			filter_panel.close()

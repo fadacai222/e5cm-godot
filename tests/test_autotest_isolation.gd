@@ -1,5 +1,6 @@
-extends SceneTree
+extends Node
 ## 自动驾驶器必须隔离积分、设置与档案持久化，并在结束后恢复运行时状态。
+## 通过对应 .tscn 运行，避免把 SceneTree 脚本错误挂到 Node。
 
 const AUTOLOADS := [
 	["SettingsStore", "res://autoload/settings_store.gd"],
@@ -10,14 +11,20 @@ const AUTOLOADS := [
 var _created: Array[Node] = []
 
 
-func _initialize() -> void:
+func _ready() -> void:
+	call_deferred("_run")
+
+
+func _run() -> void:
+	var tree := get_tree()
+	var root := tree.root
 	for entry in AUTOLOADS:
 		if root.get_node_or_null(entry[0]) == null:
 			var node: Node = load(entry[1]).new()
 			node.name = entry[0]
 			root.add_child(node)
 			_created.append(node)
-	await process_frame
+	await tree.process_frame
 
 	var game_state = root.get_node("GameState")
 	var settings_store = root.get_node("SettingsStore")
@@ -51,6 +58,6 @@ func _initialize() -> void:
 		if is_instance_valid(node) and node.get_parent() == root:
 			root.remove_child(node)
 			node.free()
-	await process_frame
+	await tree.process_frame
 	print("AUTOTEST ISOLATION PASS")
-	quit(0)
+	tree.quit(0)

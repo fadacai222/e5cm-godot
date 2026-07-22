@@ -9,6 +9,12 @@ signal restart_requested
 signal quit_requested
 signal setting_changed(key: String)
 
+const ChallengeDashboardScript = preload("res://ui/challenge_dashboard.gd")
+const RewardResolverScript = preload("res://ui/reward_appearance_resolver.gd")
+const RewardAvatarFrameScript = preload("res://ui/reward_avatar_frame.gd")
+const RewardTitleBadgeScript = preload("res://ui/reward_title_badge.gd")
+const RewardCenterScript = preload("res://ui/reward_center.gd")
+
 var in_gameplay := false
 var couple_mode := false
 
@@ -17,6 +23,8 @@ var _selected := 0
 var _panel: Control
 var _row_nodes: Array = []
 var _arrow_skins: Array = []
+var _background_images: Array[String] = []
+var _background_videos: Array[String] = []
 var _content_body: Control
 var _tab_buttons: Array[Button] = []
 var _active_tab := 0
@@ -31,12 +39,29 @@ var _profile_name_input: LineEdit
 var _profile_file_dialog: FileDialog
 var _profile_feedback: Label
 var _profile_refresh_queued := false
+var _challenge_dashboard: ChallengeDashboard
+var _reward_inventory_overlay: Control
+var _resolution_dialog: Control
+var _resolution_previous := Vector2i.ZERO
 
-const FPS_OPTIONS := [60, 120, 144, 165, 240]
+const FPS_OPTIONS := [60, 120, 144, 165, 240, 0]
+const PROFILE_TAB_INDEX := 4
+const CHALLENGE_TAB_INDEX := 5
+const EFFECT_TAB_INDEX := 6
+const ACTION_TAB_START := 7
+const BINDING_ICON_POSITION := Vector2(12, 22)
+const BINDING_ICON_SIZE := Vector2(52, 52)
+const BINDING_TEXT_INDENT := "            "
+const GAMEPLAY_ACTION_BUTTON_SIZE := Vector2(128, 104)
+const GAMEPLAY_ACTION_LEFT_X := 42.0
+const GAMEPLAY_ACTION_RIGHT_X := 190.0
+const GAMEPLAY_ACTION_TOP_Y := 704.0
+const GAMEPLAY_ACTION_BOTTOM_Y := 824.0
 const BASE_TAB_DEFS := [
 	["谱面设置", "CHART"], ["背景设置", "BACKGROUND"],
 	["游戏 / 分辨率设置", "GAME / DISPLAY"], ["键位设置", "BINDINGS"],
-	["用户信息", "PROFILE"],
+	["用户信息", "PROFILE"], ["今日挑战", "DAILY / WEEKLY"],
+	["特效控制", "VISUAL FX"],
 ]
 const GAME_ACTION_TAB_DEFS := [
 	["继续游戏", "RESUME"],
@@ -57,19 +82,34 @@ const ROWS_BY_TAB := [
 	 ["大小", "_get_arrow_size", "_step_arrow_size", "调整箭头尺寸"],
 	 ["箭头", "_get_skin", "_step_skin", "切换箭头皮肤并同步预览"]],
 	[["背景", "_get_background_mode", "_step_background_mode", "切换图片 / 视频 / 动态背景"],
+	 ["图片背景", "_get_image_background", "_step_image_background", "从原版背景库中选择；右侧按完整比例预览"],
 	 ["每个关卡自动换下一张背景图", "_get_slideshow", "_step_slideshow", "仅图片背景生效"],
+	 ["视频背景", "_get_video_background", "_step_video_background", "从原版视频库中选择；游戏内实时应用"],
 	 ["动态背景", "_get_dynamic_background", "_step_dynamic_background", "切换动态背景样式"],
-	 ["背景亮度切换", "_get_brightness", "_step_brightness", "图片、视频和动态背景均可调节"]],
+	 ["背景亮度切换", "_get_brightness", "_step_brightness", "100% 时完全移除背景黑色蒙版"]],
 	[["显示模式", "_get_display_mode", "_step_display_mode", "切换窗口 / Windows 独占全屏"],
+	 ["分辨率", "_get_resolution", "_step_resolution", "切换 720P / 900P / 1080P / 2K / 4K 输出"],
 	 ["FPS 上限", "_get_fps", "_step_fps", "限制渲染帧率，降低菜单和选歌场景功耗"],
 	 ["垂直同步", "_get_vsync", "_step_vsync", "减少画面撕裂"],
 	 ["音量", "_get_volume", "_step_volume", "调整背景音乐音量"],
 	 ["静音", "_get_muted", "_step_muted", "关闭所有游戏音频"],
 	 ["状态HUD", "_get_status_hud", "_step_status_hud", "显示右下角 FPS / 渲染后端 / 分辨率"],
-	 ["极简性能模式", "_get_performance", "_step_performance", "关闭重型效果，优先保证帧率"],
 	 ["击中音效", "_get_hit_sound", "_step_hit_sound", "开关击中判定音效"],
 	 ["自动播放", "_get_autoplay", "_step_autoplay", "切换自动判定 / 演示模式"]],
-	[], [], [], [], [],
+	[], [], [],
+	[["极简性能模式", "_get_performance", "_step_performance",
+	  "特效总开关：关闭全部粒子、频谱、暴走血条、击中特效与满 Combo 叠加层"],
+	 ["阶段 Combo 轨道描边粒子", "_get_combo_lane_particles", "_step_combo_lane_particles",
+	  "关闭后保留箭头金化与里程碑提示，只停用轨道描边、流光和粒子"],
+	 ["箭头 Combo 叠加层", "_get_combo_arrow_overlay", "_step_combo_arrow_overlay",
+	  "关闭 50/100/200 Combo 三段箭头、Key 与 Hold 金色叠加层"],
+	 ["暴走血条特效", "_get_hp_overdrive_fx", "_step_hp_overdrive_fx",
+	  "关闭满血滚动 Shader、外溢光束、电弧与火花"],
+	 ["频谱动画", "_get_spectrum_animation", "_step_spectrum_animation",
+	  "关闭右上圆盘与混音圆环，并停止 FFT 采样和 Canvas 重绘"],
+	 ["头像序列帧动画", "_get_avatar_frame_animation", "_step_avatar_frame_animation",
+	  "冻结头像框序列帧为静态首帧，减少每帧纹理切换"]],
+	[], [], [], [],
 ]
 
 
@@ -81,9 +121,17 @@ func _init(p_in_gameplay := false) -> void:
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	_scan_skins()
+	_scan_background_images()
+	_scan_background_videos()
 	_build_ui()
 	if not ProfileStore.progress_changed.is_connected(_on_profile_progress_changed):
 		ProfileStore.progress_changed.connect(_on_profile_progress_changed)
+	if not RewardService.inventory_changed.is_connected(_on_rewards_changed):
+		RewardService.inventory_changed.connect(_on_rewards_changed)
+	if not RewardService.equipped_changed.is_connected(_on_reward_equipped):
+		RewardService.equipped_changed.connect(_on_reward_equipped)
+	if not ChallengeService.challenges_changed.is_connected(_on_challenges_changed):
+		ChallengeService.challenges_changed.connect(_on_challenges_changed)
 	visible = false
 
 
@@ -122,12 +170,14 @@ func _get_volume() -> String: return str(SettingsStore.bgm_volume)
 func _step_volume(dir: int) -> void:
 	SettingsStore.bgm_volume = clampi(SettingsStore.bgm_volume + 5 * dir, 0, 100)
 	AudioDirector.refresh_volume()
+	setting_changed.emit("volume")
 
 
 func _get_muted() -> String: return "开" if SettingsStore.muted else "关"
 func _step_muted(_dir: int) -> void:
 	SettingsStore.muted = not SettingsStore.muted
 	AudioDirector.refresh_volume()
+	setting_changed.emit("muted")
 
 
 func _get_skin() -> String:
@@ -142,7 +192,7 @@ func _step_skin(dir: int) -> void:
 
 
 func _get_brightness() -> String:
-	return "%d%%" % [100 - SettingsStore.background_brightness_level * 20]
+	return "%d%%" % SettingsStore.background_brightness_percent()
 func _step_brightness(dir: int) -> void:
 	SettingsStore.background_brightness_level = clampi(
 		SettingsStore.background_brightness_level - dir, 0, 4)
@@ -150,7 +200,7 @@ func _step_brightness(dir: int) -> void:
 
 
 func _get_fps() -> String:
-	return str(SettingsStore.max_fps)
+	return "无限制" if SettingsStore.max_fps <= 0 else str(SettingsStore.max_fps)
 func _step_fps(dir: int) -> void:
 	var idx := FPS_OPTIONS.find(SettingsStore.max_fps)
 	idx = (idx + dir + FPS_OPTIONS.size()) % FPS_OPTIONS.size()
@@ -201,9 +251,57 @@ func _step_background_mode(dir: int) -> void:
 	setting_changed.emit("background_mode")
 
 
+func _get_image_background() -> String:
+	if _background_images.is_empty():
+		return "未找到"
+	var selected := SettingsStore.image_background_name
+	if selected.is_empty() or selected not in _background_images:
+		selected = _background_images[0]
+	return selected.get_basename()
+
+
+func _step_image_background(dir: int) -> void:
+	if _background_images.is_empty():
+		return
+	var idx := _background_images.find(SettingsStore.image_background_name)
+	if idx < 0:
+		idx = 0
+	idx = (idx + dir + _background_images.size()) % _background_images.size()
+	SettingsStore.image_background_name = _background_images[idx]
+	SettingsStore.reset_image_slideshow_cursor()
+	setting_changed.emit("image_background")
+
+
 func _get_slideshow() -> String: return "开启" if SettingsStore.image_slideshow else "关闭"
 func _step_slideshow(_dir: int) -> void:
 	SettingsStore.image_slideshow = not SettingsStore.image_slideshow
+	SettingsStore.reset_image_slideshow_cursor()
+	setting_changed.emit("image_slideshow")
+
+
+func _selected_video_background_name() -> String:
+	if _background_videos.is_empty():
+		return ""
+	var selected := SettingsStore.video_background_name
+	return selected if selected in _background_videos else _background_videos[0]
+
+
+func _get_video_background() -> String:
+	var selected := _selected_video_background_name()
+	if selected.is_empty():
+		return "未找到"
+	return "%02d / %02d" % [_background_videos.find(selected) + 1, _background_videos.size()]
+
+
+func _step_video_background(dir: int) -> void:
+	if _background_videos.is_empty():
+		return
+	var idx := _background_videos.find(SettingsStore.video_background_name)
+	if idx < 0:
+		idx = 0
+	idx = (idx + dir + _background_videos.size()) % _background_videos.size()
+	SettingsStore.video_background_name = _background_videos[idx]
+	setting_changed.emit("video_background")
 
 
 func _get_dynamic_background() -> String: return SettingsStore.dynamic_background_mode
@@ -220,8 +318,99 @@ func _step_display_mode(_dir: int) -> void:
 	setting_changed.emit("display_mode")
 
 
-func _get_resolution() -> String: return "1920×1080"
-func _step_resolution(_dir: int) -> void: pass
+func _get_resolution() -> String:
+	return "%s  ·  待重启" % SettingsStore.resolution_display_name() \
+		if SettingsStore.has_pending_resolution_restart() else SettingsStore.resolution_display_name()
+func _step_resolution(dir: int) -> void:
+	if is_instance_valid(_resolution_dialog):
+		return
+	_resolution_previous = SettingsStore.window_resolution
+	SettingsStore.step_resolution(dir)
+	setting_changed.emit("resolution")
+	_show_resolution_restart_dialog()
+
+
+func _show_resolution_restart_dialog() -> void:
+	if is_instance_valid(_resolution_dialog):
+		_resolution_dialog.queue_free()
+	_resolution_dialog = ColorRect.new()
+	_resolution_dialog.name = "ResolutionRestartDialog"
+	_resolution_dialog.position = Vector2.ZERO
+	_resolution_dialog.size = Vector2(1920, 1080)
+	_resolution_dialog.color = Color(0.0, 0.008, 0.025, 0.78)
+	_resolution_dialog.mouse_filter = Control.MOUSE_FILTER_STOP
+	_resolution_dialog.z_index = 900
+	add_child(_resolution_dialog)
+
+	var card := Panel.new()
+	card.name = "RestartCard"
+	card.position = Vector2(610, 310)
+	card.size = Vector2(700, 420)
+	card.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
+		Color(0.008, 0.045, 0.095, 0.99), E5OriginalTheme.CYAN, 2, 0.08))
+	_resolution_dialog.add_child(card)
+	var title := _mk_label(card, "分辨率需要重启后生效", 32, Vector2(46, 42))
+	title.size = Vector2(608, 54)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_color_override("font_color", Color(0.20, 0.96, 1.0))
+	var detail := _mk_label(card,
+		"当前选择：%s\n立即重启会保存设置并重新启动游戏；取消则恢复原分辨率。" % \
+			SettingsStore.resolution_display_name(), 20, Vector2(58, 124))
+	detail.size = Vector2(584, 112)
+	detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	detail.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	detail.add_theme_color_override("font_color", Color(0.82, 0.90, 0.98))
+
+	var restart := Button.new()
+	restart.name = "RestartNow"
+	restart.text = "立即重启"
+	restart.position = Vector2(76, 292)
+	restart.size = Vector2(250, 72)
+	UiKit.skin_arcade_button(restart, true, false, 24, E5OriginalTheme.CYAN)
+	restart.pressed.connect(_confirm_resolution_restart)
+	card.add_child(restart)
+	var cancel := Button.new()
+	cancel.name = "CancelResolution"
+	cancel.text = "取消"
+	cancel.position = Vector2(374, 292)
+	cancel.size = Vector2(250, 72)
+	UiKit.skin_arcade_button(cancel, false, false, 24, E5OriginalTheme.MAGENTA)
+	cancel.pressed.connect(_cancel_resolution_restart)
+	card.add_child(cancel)
+
+
+func _cancel_resolution_restart(restore_previous := true) -> void:
+	if restore_previous and _resolution_previous != Vector2i.ZERO:
+		SettingsStore.window_resolution = _resolution_previous
+		SettingsStore.save_settings()
+		setting_changed.emit("resolution")
+	if is_instance_valid(_resolution_dialog):
+		_resolution_dialog.queue_free()
+	_resolution_dialog = null
+	_resolution_previous = Vector2i.ZERO
+	if restore_previous:
+		_refresh_all()
+
+
+func _confirm_resolution_restart() -> void:
+	SettingsStore.save_settings()
+	ProfileStore.save_profile()
+	if OS.has_feature("editor") or DisplayServer.get_name().to_lower() == "headless":
+		if is_instance_valid(_resolution_dialog):
+			_resolution_dialog.queue_free()
+		_resolution_dialog = null
+		_resolution_previous = Vector2i.ZERO
+		UiKit.toast(_panel, "分辨率已保存；导出版本会立即重启，编辑器中请手动重新运行。")
+		return
+	var executable := OS.get_executable_path()
+	var pid := OS.create_process(executable, OS.get_cmdline_user_args())
+	if pid <= 0:
+		UiKit.toast(_panel, "自动重启失败，设置已保存；请手动重新启动游戏。")
+		return
+	get_tree().quit()
+
+
 func _get_renderer() -> String: return RenderingServer.get_current_rendering_driver_name().to_upper()
 func _step_renderer(_dir: int) -> void: pass
 func _get_status_hud() -> String: return "开启" if SettingsStore.status_hud_enabled else "关闭"
@@ -233,21 +422,60 @@ func _step_status_hud(_dir: int) -> void:
 func _get_performance() -> String: return "开启" if SettingsStore.performance_mode else "关闭"
 func _step_performance(_dir: int) -> void:
 	SettingsStore.performance_mode = not SettingsStore.performance_mode
+	SettingsStore.apply_performance()
 	setting_changed.emit("performance_mode")
+
+
+func _get_combo_lane_particles() -> String:
+	return "开启" if SettingsStore.combo_lane_particles_enabled else "关闭"
+func _step_combo_lane_particles(_dir: int) -> void:
+	SettingsStore.combo_lane_particles_enabled = not SettingsStore.combo_lane_particles_enabled
+	setting_changed.emit("combo_lane_particles")
+
+
+func _get_combo_arrow_overlay() -> String:
+	return "开启" if SettingsStore.combo_arrow_overlay_enabled else "关闭"
+func _step_combo_arrow_overlay(_dir: int) -> void:
+	SettingsStore.combo_arrow_overlay_enabled = not SettingsStore.combo_arrow_overlay_enabled
+	setting_changed.emit("combo_arrow_overlay")
+
+
+func _get_hp_overdrive_fx() -> String:
+	return "开启" if SettingsStore.hp_overdrive_fx_enabled else "关闭"
+func _step_hp_overdrive_fx(_dir: int) -> void:
+	SettingsStore.hp_overdrive_fx_enabled = not SettingsStore.hp_overdrive_fx_enabled
+	setting_changed.emit("hp_overdrive_fx")
+
+
+func _get_spectrum_animation() -> String:
+	return "开启" if SettingsStore.spectrum_animation_enabled else "关闭"
+func _step_spectrum_animation(_dir: int) -> void:
+	SettingsStore.spectrum_animation_enabled = not SettingsStore.spectrum_animation_enabled
+	setting_changed.emit("spectrum_animation")
+
+
+func _get_avatar_frame_animation() -> String:
+	return "开启" if SettingsStore.avatar_frame_animation_enabled else "关闭"
+func _step_avatar_frame_animation(_dir: int) -> void:
+	SettingsStore.avatar_frame_animation_enabled = not SettingsStore.avatar_frame_animation_enabled
+	setting_changed.emit("avatar_frame_animation")
 
 
 func _tab_defs() -> Array:
 	var result := BASE_TAB_DEFS.duplicate(true)
-	result.append_array(GAME_ACTION_TAB_DEFS if in_gameplay else SYSTEM_ACTION_TAB_DEFS)
+	if not in_gameplay:
+		result.append_array(SYSTEM_ACTION_TAB_DEFS)
 	return result
 
 
 # ---------------- 菜单开关 ----------------
 
-func open_menu() -> void:
+func open_menu(tab_index := -1) -> void:
 	visible = true
-	if _active_tab == 4:
-		_set_tab(4)
+	if tab_index >= 0:
+		_set_tab(tab_index)
+	elif _active_tab in [PROFILE_TAB_INDEX, CHALLENGE_TAB_INDEX]:
+		_set_tab(_active_tab)
 	else:
 		_refresh_all()
 	var nav := _panel.get_node_or_null("NavPanel") as Control if _panel != null else null
@@ -260,7 +488,7 @@ func open_menu() -> void:
 
 func _on_profile_progress_changed(_mode_key: String, _progress: Dictionary,
 		_preview: bool) -> void:
-	if not visible or _active_tab != 4 or _profile_refresh_queued:
+	if not visible or _active_tab != PROFILE_TAB_INDEX or _profile_refresh_queued:
 		return
 	_profile_refresh_queued = true
 	call_deferred("_refresh_profile_tab_from_progress")
@@ -268,12 +496,28 @@ func _on_profile_progress_changed(_mode_key: String, _progress: Dictionary,
 
 func _refresh_profile_tab_from_progress() -> void:
 	_profile_refresh_queued = false
-	if visible and _active_tab == 4:
-		_set_tab(4)
+	if visible and _active_tab == PROFILE_TAB_INDEX:
+		_set_tab(PROFILE_TAB_INDEX)
+
+
+func _on_rewards_changed() -> void:
+	if visible and _active_tab == PROFILE_TAB_INDEX and not is_instance_valid(_reward_inventory_overlay):
+		call_deferred("_set_tab", PROFILE_TAB_INDEX)
+
+
+func _on_reward_equipped(_slot: String, _reward_id: String) -> void:
+	_on_rewards_changed()
+
+
+func _on_challenges_changed() -> void:
+	if visible and _active_tab == CHALLENGE_TAB_INDEX:
+		call_deferred("_set_tab", CHALLENGE_TAB_INDEX)
 
 
 func close_menu() -> void:
 	_cancel_rebind()
+	_cancel_resolution_restart()
+	_close_reward_inventory()
 	visible = false
 	SettingsStore.save_settings()
 	resumed.emit()
@@ -283,12 +527,38 @@ func is_open() -> bool:
 	return visible
 
 
+func active_tab_for_test() -> int:
+	return _active_tab
+
+
 func _scan_skins() -> void:
 	_arrow_skins = []
 	var base := AssetLoader.abs_path("UI-img/游戏界面/箭头")
 	for entry in AssetLoader.list_directories(base):
 		if FileAccess.file_exists(base.path_join(entry).path_join("arrow/skin.json")):
 			_arrow_skins.append(entry)
+
+
+func _scan_background_images() -> void:
+	_background_images.clear()
+	for entry in AssetLoader.list_resources("冷资源/backimages/背景图",
+			["png", "jpg", "jpeg", "webp"]):
+		_background_images.append(entry)
+	_background_images.sort_custom(func(a: String, b: String): return a.naturalnocasecmp_to(b) < 0)
+	if not _background_images.is_empty() \
+			and SettingsStore.image_background_name not in _background_images:
+		SettingsStore.image_background_name = _background_images[0]
+
+
+func _scan_background_videos() -> void:
+	_background_videos.clear()
+	for entry in AssetLoader.list_resources("backmovies/游戏中",
+			["mp4", "avi", "mpg", "mpeg", "webm", "mov", "ogv"]):
+		_background_videos.append(entry)
+	_background_videos.sort_custom(func(a: String, b: String): return a.naturalnocasecmp_to(b) < 0)
+	if not _background_videos.is_empty() \
+			and SettingsStore.video_background_name not in _background_videos:
+		SettingsStore.video_background_name = _background_videos[0]
 
 
 # ---------------- UI ----------------
@@ -386,20 +656,25 @@ func _build_ui() -> void:
 
 	_tab_buttons.clear()
 	var tabs := _tab_defs()
+	# Gameplay 只保留七个设置页；四个局内动作固定收纳在侧栏底部 2×2 区域。
+	var tab_step := 74.0 if in_gameplay else 86.0
+	var tab_height := 60.0 if in_gameplay else 68.0
 	for i in tabs.size():
 		var tab := Button.new()
 		tab.name = "Tab%d" % i
 		tab.text = "%02d   %s\n       %s" % [i + 1, tabs[i][0], tabs[i][1]]
-		tab.position = Vector2(24, 132 + i * (94 if in_gameplay else 112))
-		tab.size = Vector2(312, 72 if in_gameplay else 88)
+		tab.position = Vector2(24, 132 + i * tab_step)
+		tab.size = Vector2(312, tab_height)
 		tab.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		tab.pressed.connect(_set_tab.bind(i))
-		var action_tab := i >= 5
-		var danger_tab := action_tab and ((not in_gameplay) or i >= 7)
+		var action_tab := i >= ACTION_TAB_START
+		var danger_tab := action_tab and ((not in_gameplay) or i >= ACTION_TAB_START + 2)
 		UiKit.skin_arcade_button(tab, false, danger_tab, 20,
 			E5OriginalTheme.MAGENTA if action_tab else E5OriginalTheme.CYAN)
 		nav.add_child(tab)
 		_tab_buttons.append(tab)
+	if in_gameplay:
+		_build_gameplay_action_grid(nav)
 
 	var content_title := _mk_label(content, "", 34, Vector2(42, 34))
 	content_title.name = "ContentTitle"
@@ -445,14 +720,75 @@ func _nav_action(parent: Control, text_value: String, pos: Vector2, cb: Callable
 	return button
 
 
+func _solid_action_style(color: Color, hover_scale := 1.0) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(
+		clampf(color.r * hover_scale, 0.0, 1.0),
+		clampf(color.g * hover_scale, 0.0, 1.0),
+		clampf(color.b * hover_scale, 0.0, 1.0), 1.0)
+	style.border_color = Color(1, 1, 1, 0.72)
+	style.set_border_width_all(2)
+	style.set_corner_radius_all(4)
+	style.shadow_color = Color(color.r, color.g, color.b, 0.28)
+	style.shadow_size = 8
+	style.content_margin_left = 8
+	style.content_margin_right = 8
+	style.content_margin_top = 8
+	style.content_margin_bottom = 8
+	return style
+
+
+func _add_gameplay_action_button(parent: Control, node_name: String, text_value: String,
+		pos: Vector2, color: Color, cb: Callable) -> Button:
+	var button := Button.new()
+	button.name = node_name
+	button.text = text_value
+	button.position = pos
+	button.size = GAMEPLAY_ACTION_BUTTON_SIZE
+	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	button.add_theme_font_size_override("font_size", 18)
+	button.add_theme_color_override("font_color", Color.WHITE)
+	button.add_theme_color_override("font_hover_color", Color.WHITE)
+	button.add_theme_color_override("font_pressed_color", Color.WHITE)
+	button.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.72))
+	button.add_theme_constant_override("outline_size", 4)
+	button.add_theme_stylebox_override("normal", _solid_action_style(color))
+	button.add_theme_stylebox_override("hover", _solid_action_style(color, 1.10))
+	button.add_theme_stylebox_override("pressed", _solid_action_style(color, 0.82))
+	button.focus_mode = Control.FOCUS_ALL
+	button.pressed.connect(cb)
+	parent.add_child(button)
+	return button
+
+
+func _build_gameplay_action_grid(nav: Control) -> void:
+	var label := _mk_label(nav, "SESSION CONTROL", 13, Vector2(GAMEPLAY_ACTION_LEFT_X, 674))
+	label.name = "SessionControlLabel"
+	label.size = Vector2(276, 24)
+	label.add_theme_color_override("font_color", Color(0.46, 0.66, 0.78))
+	label.add_theme_constant_override("outline_size", 0)
+	_add_gameplay_action_button(nav, "ActionResume", "继续游戏\nRESUME",
+		Vector2(GAMEPLAY_ACTION_LEFT_X, GAMEPLAY_ACTION_TOP_Y),
+		Color(0.02, 0.56, 0.30), _on_resume_pressed)
+	_add_gameplay_action_button(nav, "ActionReload", "重载歌曲\nRELOAD",
+		Vector2(GAMEPLAY_ACTION_RIGHT_X, GAMEPLAY_ACTION_TOP_Y),
+		Color(0.78, 0.48, 0.02), _on_restart_pressed)
+	_add_gameplay_action_button(nav, "ActionReturn", "退出本局\nRETURN",
+		Vector2(GAMEPLAY_ACTION_LEFT_X, GAMEPLAY_ACTION_BOTTOM_Y),
+		Color(0.92, 0.08, 0.46), _on_quit_pressed)
+	_add_gameplay_action_button(nav, "ActionDesktop", "大退\nDESKTOP",
+		Vector2(GAMEPLAY_ACTION_RIGHT_X, GAMEPLAY_ACTION_BOTTOM_Y),
+		Color(0.82, 0.015, 0.035), _on_exit_desktop_pressed)
+
+
 func _set_tab(index: int) -> void:
 	var tabs := _tab_defs()
 	_active_tab = clampi(index, 0, tabs.size() - 1)
 	for i in _tab_buttons.size():
 		var button := _tab_buttons[i]
 		var selected_tab := i == _active_tab
-		var action_tab := i >= 5
-		var danger_tab := action_tab and ((not in_gameplay) or i >= 7)
+		var action_tab := i >= ACTION_TAB_START
+		var danger_tab := action_tab and ((not in_gameplay) or i >= ACTION_TAB_START + 2)
 		button.modulate = Color.WHITE if selected_tab else Color(0.82, 0.88, 0.96, 0.86)
 		button.position.x = 32.0 if selected_tab else 24.0
 		button.size.x = 304.0 if selected_tab else 312.0
@@ -463,15 +799,18 @@ func _set_tab(index: int) -> void:
 	for child in _content_body.get_children():
 		child.free()
 	_preview_panel = null
+	_challenge_dashboard = null
 	_row_defs = ROWS_BY_TAB[_active_tab].duplicate(true) if _active_tab < ROWS_BY_TAB.size() else []
 	_row_nodes.clear()
 	_selected = 0
 	_rebinding_action = ""
 	if _active_tab == 3:
 		_build_bindings()
-	elif _active_tab == 4:
+	elif _active_tab == PROFILE_TAB_INDEX:
 		_build_profile_tab()
-	elif _active_tab >= 5:
+	elif _active_tab == CHALLENGE_TAB_INDEX:
+		_build_challenge_tab()
+	elif _active_tab >= ACTION_TAB_START:
 		_build_action_tab(_active_tab)
 	else:
 		_build_rows()
@@ -482,7 +821,7 @@ func _build_rows() -> void:
 	var left_arrow := AssetLoader.tex("UI-img/选歌界面资源/设置/左小箭头.png")
 	var right_arrow := AssetLoader.tex("UI-img/选歌界面资源/设置/右小箭头.png")
 	var list_width := 700.0
-	var row_step := 96.0
+	var row_step := 84.0 if _row_defs.size() > 8 else 96.0
 	for i in _row_defs.size():
 		var holder := Panel.new()
 		holder.name = "SettingRow%d" % i
@@ -592,6 +931,21 @@ func _first_preview_resource(rel_dir: String, extensions: Array[String]) -> Stri
 	return "" if names.is_empty() else AssetLoader.abs_path(rel_dir.path_join(names[0]))
 
 
+func _selected_background_path() -> String:
+	if _background_images.is_empty():
+		return ""
+	var selected := SettingsStore.image_background_name
+	if selected.is_empty() or selected not in _background_images:
+		selected = _background_images[0]
+	return AssetLoader.abs_path("冷资源/backimages/背景图".path_join(selected))
+
+
+func _selected_video_background_path() -> String:
+	var selected := _selected_video_background_name()
+	return "" if selected.is_empty() else \
+		AssetLoader.abs_path("backmovies/游戏中".path_join(selected))
+
+
 func _preview_video_stream(path: String) -> VideoStream:
 	if path.is_empty():
 		return null
@@ -630,10 +984,10 @@ func _build_dynamic_background_preview(canvas: Control) -> void:
 		AssetLoader.tex("UI-img/动态背景/唱片/素材/背景.png"), Rect2(Vector2.ZERO, dynamic.size))
 	_preview_texture(dynamic, "Record",
 		AssetLoader.tex("UI-img/动态背景/唱片/素材/唱片.png"),
-		Rect2(Vector2(178, 80), Vector2(230, 230)), TextureRect.STRETCH_KEEP_ASPECT_CENTERED)
+		Rect2(Vector2(178, 64), Vector2(230, 230)), TextureRect.STRETCH_KEEP_ASPECT_CENTERED)
 	_preview_texture(dynamic, "FootDecoration",
 		AssetLoader.tex("UI-img/动态背景/唱片/素材/foot.png"),
-		Rect2(Vector2(0, 448), Vector2(586, 72)), TextureRect.STRETCH_SCALE)
+		Rect2(Vector2(0, dynamic.size.y - 66), Vector2(dynamic.size.x, 66)), TextureRect.STRETCH_SCALE)
 	if in_gameplay:
 		var paused_label := _mk_label(dynamic, "PAUSED", 18, Vector2(458, 18))
 		paused_label.name = "PausedState"
@@ -643,20 +997,20 @@ func _build_dynamic_background_preview(canvas: Control) -> void:
 func _build_background_preview(parent: Control) -> void:
 	var canvas := ColorRect.new()
 	canvas.name = "PreviewCanvas"
-	canvas.position = Vector2(34, 130)
-	canvas.size = Vector2(586, 520)
+	canvas.position = Vector2(34, 118)
+	canvas.size = Vector2(586, 430)
 	canvas.color = Color(0, 0, 0, 0.92)
 	canvas.clip_contents = true
 	canvas.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(canvas)
 	match SettingsStore.background_mode:
 		"图片":
-			var image_path := _first_preview_resource("冷资源/backimages/背景图",
-				["png", "jpg", "jpeg", "webp"])
-			_preview_texture(canvas, "PreviewImage", AssetLoader.tex(image_path),
-				Rect2(Vector2.ZERO, canvas.size))
+			var image_path := _selected_background_path()
+			var preview := _preview_texture(canvas, "PreviewImage", AssetLoader.tex(image_path),
+				Rect2(Vector2.ZERO, canvas.size), TextureRect.STRETCH_KEEP_ASPECT_CENTERED)
+			preview.clip_contents = true
 		"视频":
-			var video_path := _first_preview_resource("backmovies/游戏中", ["mp4", "ogv", "webm"])
+			var video_path := _selected_video_background_path()
 			var video := VideoStreamPlayer.new()
 			video.name = "PreviewVideo"
 			video.position = Vector2.ZERO
@@ -676,16 +1030,120 @@ func _build_background_preview(parent: Control) -> void:
 	brightness_dim.name = "BrightnessDim"
 	brightness_dim.position = Vector2.ZERO
 	brightness_dim.size = canvas.size
-	brightness_dim.color = Color(0, 0, 0, clampf(
-		0.45 + 0.10 * float(SettingsStore.background_brightness_level), 0.0, 0.95))
+	brightness_dim.color = Color(0, 0, 0, SettingsStore.background_dim_alpha())
 	brightness_dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	canvas.add_child(brightness_dim)
-	var mode := _mk_label(parent, "%s / %s / 亮度 %s" % [SettingsStore.background_mode,
-		SettingsStore.dynamic_background_mode, _get_brightness()], 22, Vector2(34, 686))
+	_build_background_thumbnail_strip(parent)
+	var mode_detail := "%s / 亮度 %s" % [SettingsStore.background_mode, _get_brightness()]
+	if SettingsStore.background_mode == "图片":
+		mode_detail += " / %s（%d 张）" % [_get_image_background(), _background_images.size()]
+	elif SettingsStore.background_mode == "视频":
+		var selected_video := _selected_video_background_name()
+		mode_detail += " / %s（%d 段）" % [
+			selected_video.get_basename() if not selected_video.is_empty() else "未找到",
+			_background_videos.size()]
+	elif SettingsStore.background_mode == "动态背景":
+		mode_detail += " / %s" % SettingsStore.dynamic_background_mode
+	var mode := _mk_label(parent, mode_detail, 19, Vector2(34, 720))
 	mode.name = "PreviewMode"
 	mode.size = Vector2(586, 44)
 	mode.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	mode.add_theme_color_override("font_color", Color(0.0, 0.94, 0.98))
+
+
+func _build_background_thumbnail_strip(parent: Control) -> void:
+	var strip := Control.new()
+	strip.name = "BackgroundThumbnailStrip"
+	strip.position = Vector2(34, 570)
+	strip.size = Vector2(586, 126)
+	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	parent.add_child(strip)
+	var title := _mk_label(strip, "图片背景库  /  使用左右箭头切换", 14, Vector2(0, 0))
+	title.size = Vector2(586, 24)
+	title.add_theme_color_override("font_color", Color(0.56, 0.68, 0.80))
+	title.add_theme_constant_override("outline_size", 0)
+	if SettingsStore.background_mode == "视频":
+		title.text = "视频背景库  /  使用“视频背景”左右箭头切换"
+		_build_video_background_strip(strip)
+		return
+	if SettingsStore.background_mode == "动态背景":
+		title.text = "动态背景  /  由游戏舞台实时渲染"
+		var dynamic_hint := _mk_label(strip, "100% 亮度时不叠加任何黑色蒙版", 18, Vector2(0, 42))
+		dynamic_hint.size = Vector2(586, 46)
+		dynamic_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		dynamic_hint.add_theme_color_override("font_color", Color(0.36, 0.92, 1.0))
+		return
+	if _background_images.is_empty():
+		var empty := _mk_label(strip, "未找到可用图片背景", 18, Vector2(0, 40))
+		empty.size = Vector2(586, 54)
+		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		return
+	var selected_idx := _background_images.find(SettingsStore.image_background_name)
+	if selected_idx < 0:
+		selected_idx = 0
+	var visible_count := mini(5, _background_images.size())
+	var thumb_w := 106.0
+	var gap := 13.0
+	var total_w := float(visible_count) * thumb_w + float(maxi(0, visible_count - 1)) * gap
+	var start_x := (strip.size.x - total_w) * 0.5
+	for slot in visible_count:
+		var offset := slot - visible_count / 2
+		var image_idx := posmod(selected_idx + offset, _background_images.size())
+		var selected := image_idx == selected_idx
+		var holder := Panel.new()
+		holder.name = "BackgroundThumb%d" % slot
+		holder.position = Vector2(start_x + slot * (thumb_w + gap), 30)
+		holder.size = Vector2(thumb_w, 84)
+		holder.clip_contents = true
+		holder.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
+			Color(0.015, 0.04, 0.07, 0.96),
+			E5OriginalTheme.GOLD if selected else Color(0.12, 0.28, 0.40, 0.86),
+			3 if selected else 1, 0.04))
+		strip.add_child(holder)
+		var path := AssetLoader.abs_path("冷资源/backimages/背景图".path_join(_background_images[image_idx]))
+		var image := _preview_texture(holder, "Image", AssetLoader.tex(path),
+			Rect2(Vector2(3, 3), holder.size - Vector2(6, 6)), TextureRect.STRETCH_KEEP_ASPECT_COVERED)
+		image.modulate = Color.WHITE if selected else Color(0.58, 0.64, 0.72, 0.78)
+
+
+func _build_video_background_strip(strip: Control) -> void:
+	if _background_videos.is_empty():
+		var empty := _mk_label(strip, "未找到可用视频背景", 18, Vector2(0, 40))
+		empty.size = Vector2(586, 54)
+		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		return
+	var selected_idx := _background_videos.find(SettingsStore.video_background_name)
+	if selected_idx < 0:
+		selected_idx = 0
+	var visible_count := mini(5, _background_videos.size())
+	var chip_w := 106.0
+	var gap := 13.0
+	var total_w := float(visible_count) * chip_w + float(maxi(0, visible_count - 1)) * gap
+	var start_x := (strip.size.x - total_w) * 0.5
+	for slot in visible_count:
+		var offset := slot - visible_count / 2
+		var video_idx := posmod(selected_idx + offset, _background_videos.size())
+		var selected := video_idx == selected_idx
+		var holder := Panel.new()
+		holder.name = "VideoBackgroundChip%d" % slot
+		holder.position = Vector2(start_x + slot * (chip_w + gap), 30)
+		holder.size = Vector2(chip_w, 84)
+		holder.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
+			Color(0.015, 0.04, 0.07, 0.96),
+			E5OriginalTheme.GOLD if selected else Color(0.12, 0.28, 0.40, 0.86),
+			3 if selected else 1, 0.04))
+		strip.add_child(holder)
+		var index_label := _mk_label(holder, "%02d" % (video_idx + 1), 24, Vector2(0, 10))
+		index_label.size = Vector2(chip_w, 34)
+		index_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		index_label.add_theme_color_override("font_color",
+			E5OriginalTheme.GOLD if selected else Color(0.55, 0.72, 0.84))
+		var name_label := _mk_label(holder,
+			_background_videos[video_idx].get_basename(), 11, Vector2(6, 48))
+		name_label.size = Vector2(chip_w - 12, 24)
+		name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		name_label.add_theme_constant_override("outline_size", 0)
 
 
 func _build_display_preview(parent: Control) -> void:
@@ -708,11 +1166,19 @@ func _build_display_preview(parent: Control) -> void:
 		value.add_theme_color_override("font_color", Color(0.99, 0.84, 0.31))
 
 
+func _build_challenge_tab() -> void:
+	ChallengeService.ensure_current()
+	ChallengeService.note_game_opened()
+	_challenge_dashboard = ChallengeDashboardScript.new()
+	_challenge_dashboard.name = "ChallengeDashboard"
+	_content_body.add_child(_challenge_dashboard)
+
+
 func _build_profile_tab() -> void:
 	var profile_card := Panel.new()
 	profile_card.name = "ProfileIdentityCard"
 	profile_card.position = Vector2(0, 0)
-	profile_card.size = Vector2(520, 842)
+	profile_card.size = Vector2(430, 842)
 	profile_card.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
 		Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0))
 	_content_body.add_child(profile_card)
@@ -722,12 +1188,12 @@ func _build_profile_tab() -> void:
 	identity_frame.fill_color = Color(0.010, 0.052, 0.115, 0.96)
 
 	var eyebrow := _mk_label(profile_card, "PLAYER IDENTITY / 本机档案", 18, Vector2(34, 28))
-	eyebrow.size = Vector2(430, 34)
+	eyebrow.size = Vector2(360, 34)
 	eyebrow.add_theme_color_override("font_color", Color(0.0, 0.92, 1.0))
 	_profile_avatar = TextureRect.new()
 	_profile_avatar.name = "ProfileAvatar"
-	_profile_avatar.position = Vector2(145, 82)
-	_profile_avatar.size = Vector2(230, 230)
+	_profile_avatar.position = Vector2(120, 84)
+	_profile_avatar.size = Vector2(190, 190)
 	_profile_avatar.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_profile_avatar.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	_profile_avatar.texture = _profile_avatar_texture()
@@ -740,52 +1206,67 @@ func _build_profile_tab() -> void:
 	_profile_avatar.material = avatar_material
 	profile_card.add_child(_profile_avatar)
 	var avatar_ring := ReferenceRect.new()
-	avatar_ring.position = Vector2(136, 73)
-	avatar_ring.size = Vector2(248, 248)
+	avatar_ring.position = Vector2(115, 79)
+	avatar_ring.size = Vector2(200, 200)
 	avatar_ring.border_color = Color(1.0, 0.12, 0.78, 0.92)
 	avatar_ring.border_width = 4.0
 	avatar_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	profile_card.add_child(avatar_ring)
+	var reward_appearance: Dictionary = RewardResolverScript.new().resolve_current()
+	var equipped_avatar_frame: RewardAvatarFrame = RewardAvatarFrameScript.new()
+	equipped_avatar_frame.name = "EquippedAvatarFrame"
+	profile_card.add_child(equipped_avatar_frame)
+	equipped_avatar_frame.set_avatar_target(_profile_avatar.get_rect(), 3.0)
+	equipped_avatar_frame.set_appearance(reward_appearance.get("avatar_frame", {}))
+	var equipped_title: RewardTitleBadge = RewardTitleBadgeScript.new()
+	equipped_title.name = "EquippedTitleBadge"
+	# 紧凑称号只显示名称，不再并排塞入英文代号；贴住头像框底缘并保持居中。
+	equipped_title.position = Vector2(120, 264)
+	equipped_title.size = Vector2(190, 34)
+	equipped_title.z_index = 8
+	profile_card.add_child(equipped_title)
+	equipped_title.set_appearance(reward_appearance.get("title", {}), 15)
 
 	var avatar_button := Button.new()
+	avatar_button.name = "ChangeAvatarButton"
 	avatar_button.text = "更换头像"
-	avatar_button.position = Vector2(145, 334)
-	avatar_button.size = Vector2(230, 54)
-	UiKit.skin_arcade_button(avatar_button, false, false, 21,
+	avatar_button.position = Vector2(141, 326)
+	avatar_button.size = Vector2(148, 40)
+	UiKit.skin_arcade_button(avatar_button, false, false, 17,
 		E5OriginalTheme.MAGENTA)
 	avatar_button.pressed.connect(_open_profile_avatar_dialog)
 	profile_card.add_child(avatar_button)
 
-	var name_title := _mk_label(profile_card, "昵称", 18, Vector2(36, 430))
+	var name_title := _mk_label(profile_card, "昵称", 18, Vector2(36, 384))
 	name_title.size = Vector2(120, 30)
 	name_title.add_theme_color_override("font_color", Color(0.62, 0.72, 0.86))
 	_profile_name_input = LineEdit.new()
 	_profile_name_input.name = "NicknameInput"
 	_profile_name_input.text = str(ProfileStore.profile.get("昵称", "玩家"))
-	_profile_name_input.position = Vector2(36, 468)
-	_profile_name_input.size = Vector2(448, 58)
+	_profile_name_input.position = Vector2(36, 420)
+	_profile_name_input.size = Vector2(358, 56)
 	_profile_name_input.max_length = 16
 	UiKit.skin_arcade_input(_profile_name_input, 24)
 	_profile_name_input.text_submitted.connect(func(_text: String): _save_profile_name())
 	profile_card.add_child(_profile_name_input)
 	var save_name := Button.new()
 	save_name.text = "保存昵称"
-	save_name.position = Vector2(36, 544)
-	save_name.size = Vector2(448, 58)
+	save_name.position = Vector2(36, 494)
+	save_name.size = Vector2(358, 56)
 	UiKit.skin_arcade_button(save_name, true, false, 22)
 	save_name.pressed.connect(_save_profile_name)
 	profile_card.add_child(save_name)
-	_profile_feedback = _mk_label(profile_card, "头像支持 PNG / JPG / WEBP，昵称最多 16 字。", 16,
-		Vector2(36, 620))
-	_profile_feedback.size = Vector2(448, 68)
+	_profile_feedback = _mk_label(profile_card, "头像支持 PNG / JPG / WEBP，昵称最多 16 字。", 15,
+		Vector2(36, 574))
+	_profile_feedback.size = Vector2(358, 68)
 	_profile_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_profile_feedback.add_theme_color_override("font_color", Color(0.52, 0.64, 0.77))
 	_profile_feedback.add_theme_constant_override("outline_size", 0)
 
 	var progress_card := Panel.new()
 	progress_card.name = "ProfileProgressCard"
-	progress_card.position = Vector2(552, 0)
-	progress_card.size = Vector2(837, 842)
+	progress_card.position = Vector2(462, 0)
+	progress_card.size = Vector2(927, 842)
 	progress_card.add_theme_stylebox_override("panel", E5OriginalTheme.panel_style(
 		Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0))
 	_content_body.add_child(progress_card)
@@ -799,35 +1280,183 @@ func _build_profile_tab() -> void:
 	var rank_icon := TextureRect.new()
 	rank_icon.name = "ProfileRankIcon"
 	rank_icon.texture = AssetLoader.tex(ProfileStore.get_rank_asset_path_for_display())
-	rank_icon.position = Vector2(40, 74)
-	rank_icon.size = Vector2(260, 160)
+	rank_icon.position = Vector2(40, 76)
+	rank_icon.size = Vector2(180, 100)
 	rank_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	rank_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	rank_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	progress_card.add_child(rank_icon)
-	var rank_label := _mk_label(progress_card, ProfileStore.get_rank_label_for_display(), 46, Vector2(326, 94))
+	var rank_label := _mk_label(progress_card, ProfileStore.get_rank_label_for_display(), 38, Vector2(330, 82))
 	rank_label.name = "ProfileRankLabel"
-	rank_label.size = Vector2(420, 70)
+	rank_label.size = Vector2(250, 60)
 	rank_label.add_theme_color_override("font_color", Color(1.0, 0.91, 0.38))
 	var level_summary := _mk_label(progress_card, "最高模式等级  Lv.%d" % ProfileStore.get_highest_mode_level_for_display(),
-		22, Vector2(328, 164))
-	level_summary.size = Vector2(430, 42)
+		20, Vector2(332, 142))
+	level_summary.size = Vector2(430, 38)
 	level_summary.add_theme_color_override("font_color", Color(0.72, 0.84, 0.96))
 
 	_build_profile_progress_row(progress_card, "花式", ProfileStore.get_mode_progress_for_display("花式"),
-		Vector2(38, 248), Color(0.02, 0.92, 1.0))
+		Vector2(36, 180), Color(0.02, 0.92, 1.0))
 	_build_profile_progress_row(progress_card, "竞速", ProfileStore.get_mode_progress_for_display("竞速"),
-		Vector2(38, 394), Color(1.0, 0.14, 0.76))
+		Vector2(36, 270), Color(1.0, 0.14, 0.76))
 	_build_profile_progress_row(progress_card, "diy", ProfileStore.get_mode_progress_for_display("DIY"),
-		Vector2(38, 540), Color(0.72, 0.34, 1.0))
+		Vector2(36, 360), Color(0.72, 0.34, 1.0))
 	var stats: Dictionary = ProfileStore.profile.get("统计", {})
 	var stat_text := "MAX COMBO  %d     /     最高分  %d\n累计 S  %d          /     游玩 %d 分钟" % [
 		int(stats.get("最大Combo", 0)), int(stats.get("最高分", 0)),
 		int(stats.get("累计评价S数", 0)), int(stats.get("游玩时长分钟", 0)),
 	]
-	var stat_label := _mk_label(progress_card, stat_text, 18, Vector2(42, 704))
-	stat_label.size = Vector2(730, 82)
+	var stat_label := _mk_label(progress_card, stat_text, 15, Vector2(40, 448))
+	stat_label.size = Vector2(840, 58)
 	stat_label.add_theme_color_override("font_color", Color(0.70, 0.80, 0.92))
+	_build_profile_rewards(progress_card)
+
+
+func _build_profile_rewards(parent: Control) -> void:
+	var owned_count := RewardService.owned_rewards(false).size()
+	var total_count := RewardService.all_rewards().size()
+	var unread_count := RewardService.unseen_count()
+	var backpack := Button.new()
+	backpack.name = "MyBackpackButton"
+	backpack.position = Vector2(36, 536)
+	backpack.size = Vector2(330, 76)
+	# 按钮自身不再放带空格缩进的多行文字，避免字体、DPI 或语言变化后压住图标。
+	backpack.text = ""
+	backpack.tooltip_text = "查看全部称号、头像框与玩家卡，并在完整背包界面中预览和装备。"
+	backpack.pressed.connect(_open_reward_inventory)
+	UiKit.skin_arcade_button(backpack, true, false, 18, E5OriginalTheme.GOLD)
+	parent.add_child(backpack)
+	_add_backpack_icon(backpack)
+	var backpack_title := _mk_label(backpack, "我的背包", 18, Vector2(78, 9))
+	backpack_title.name = "BackpackTitle"
+	backpack_title.size = Vector2(226, 28)
+	backpack_title.add_theme_color_override("font_color", Color(1.0, 0.90, 0.43))
+	backpack_title.add_theme_constant_override("outline_size", 0)
+	backpack_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var count_text := "%d / %d" % [owned_count, total_count]
+	if unread_count > 0:
+		count_text += "    NEW %d" % unread_count
+	var backpack_count := _mk_label(backpack, count_text, 14, Vector2(78, 40))
+	backpack_count.name = "BackpackCount"
+	backpack_count.size = Vector2(226, 22)
+	backpack_count.add_theme_color_override("font_color", Color(0.84, 0.89, 0.96))
+	backpack_count.add_theme_constant_override("outline_size", 0)
+	backpack_count.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var inventory_hint := _mk_label(parent, "REWARD INVENTORY", 14, Vector2(388, 546))
+	inventory_hint.size = Vector2(470, 24)
+	inventory_hint.add_theme_color_override("font_color", E5OriginalTheme.GOLD)
+	inventory_hint.add_theme_constant_override("outline_size", 0)
+	var inventory_copy := _mk_label(parent,
+		"称号、头像框和玩家卡统一在背包中预览与装备。", 15, Vector2(388, 578))
+	inventory_copy.size = Vector2(470, 44)
+	inventory_copy.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	inventory_copy.add_theme_color_override("font_color", Color(0.68, 0.78, 0.90))
+	inventory_copy.add_theme_constant_override("outline_size", 0)
+
+	var equipped := _mk_label(parent,
+		"当前装配  ·  称号：%s  /  头像框：%s  /  玩家卡：%s" % [
+			_reward_name_or_default(RewardService.equipped("title")),
+			_reward_name_or_default(RewardService.equipped("avatar_frame")),
+			_reward_name_or_default(RewardService.equipped("profile_card")),
+		], 15, Vector2(42, 646))
+	equipped.name = "EquippedRewardSummary"
+	equipped.size = Vector2(parent.size.x - 84, 34)
+	equipped.add_theme_color_override("font_color", Color(0.78, 0.86, 0.95))
+	equipped.add_theme_constant_override("outline_size", 0)
+	var hint := _mk_label(parent,
+		"背包内未解锁奖励会整项灰化并显示锁标；已拥有奖励保留完整彩色缩略图。",
+		14, Vector2(42, 692))
+	hint.name = "BackpackHint"
+	hint.size = Vector2(parent.size.x - 84, 30)
+	hint.add_theme_color_override("font_color", E5OriginalTheme.MUTED)
+	hint.add_theme_constant_override("outline_size", 0)
+
+
+func _add_backpack_icon(button: Button) -> void:
+	var icon := Control.new()
+	icon.name = "BackpackIcon"
+	icon.position = Vector2(18, 14)
+	icon.size = Vector2(48, 48)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(icon)
+
+	var gold := Color(1.0, 0.82, 0.25, 0.98)
+	var gold_soft := Color(1.0, 0.66, 0.12, 0.72)
+	var body := Polygon2D.new()
+	body.name = "BagBody"
+	body.polygon = PackedVector2Array([
+		Vector2(7, 17), Vector2(14, 13), Vector2(34, 13), Vector2(41, 17),
+		Vector2(44, 40), Vector2(39, 44), Vector2(9, 44), Vector2(4, 40),
+	])
+	body.color = Color(0.10, 0.07, 0.015, 0.96)
+	icon.add_child(body)
+	var outline := Line2D.new()
+	outline.name = "BagOutline"
+	outline.points = PackedVector2Array([
+		Vector2(7, 17), Vector2(14, 13), Vector2(34, 13), Vector2(41, 17),
+		Vector2(44, 40), Vector2(39, 44), Vector2(9, 44), Vector2(4, 40), Vector2(7, 17),
+	])
+	outline.width = 2.4
+	outline.default_color = gold
+	outline.antialiased = true
+	icon.add_child(outline)
+	var handle := Line2D.new()
+	handle.name = "BagHandle"
+	handle.points = PackedVector2Array([
+		Vector2(15, 14), Vector2(15, 8), Vector2(19, 5),
+		Vector2(29, 5), Vector2(33, 8), Vector2(33, 14),
+	])
+	handle.width = 2.4
+	handle.default_color = gold
+	handle.antialiased = true
+	icon.add_child(handle)
+	var pocket := Line2D.new()
+	pocket.name = "BagPocket"
+	pocket.points = PackedVector2Array([
+		Vector2(13, 28), Vector2(13, 37), Vector2(17, 40),
+		Vector2(31, 40), Vector2(35, 37), Vector2(35, 28),
+	])
+	pocket.width = 2.0
+	pocket.default_color = gold_soft
+	pocket.antialiased = true
+	icon.add_child(pocket)
+	var clasp := Polygon2D.new()
+	clasp.name = "BagClasp"
+	clasp.polygon = PackedVector2Array([
+		Vector2(20, 23), Vector2(24, 20), Vector2(28, 23), Vector2(24, 26),
+	])
+	clasp.color = Color(1.0, 0.93, 0.62, 1.0)
+	icon.add_child(clasp)
+
+
+func _reward_name_or_default(reward_id: String) -> String:
+	return "默认" if reward_id.is_empty() else RewardService.reward_name(reward_id)
+
+
+func _open_reward_inventory() -> void:
+	_close_reward_inventory()
+	_reward_inventory_overlay = ColorRect.new()
+	_reward_inventory_overlay.name = "RewardInventoryOverlay"
+	_reward_inventory_overlay.position = Vector2.ZERO
+	_reward_inventory_overlay.size = Vector2(1920, 1080)
+	_reward_inventory_overlay.color = Color(0.0, 0.008, 0.025, 0.94)
+	_reward_inventory_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_reward_inventory_overlay.z_index = 500
+	add_child(_reward_inventory_overlay)
+	var panel: RewardCenter = RewardCenterScript.new()
+	panel.name = "RewardInventoryPanel"
+	panel.position = Vector2(180, 90)
+	panel.size = Vector2(1560, 900)
+	panel.close_requested.connect(_close_reward_inventory)
+	_reward_inventory_overlay.add_child(panel)
+	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
+
+
+func _close_reward_inventory() -> void:
+	if is_instance_valid(_reward_inventory_overlay):
+		_reward_inventory_overlay.queue_free()
+	_reward_inventory_overlay = null
 
 
 func _build_profile_progress_row(parent: Control, mode: String, progress: Dictionary,
@@ -840,25 +1469,25 @@ func _build_profile_progress_row(parent: Control, mode: String, progress: Dictio
 	var holder := Panel.new()
 	holder.name = "%sProgress" % mode
 	holder.position = position
-	holder.size = Vector2(760, 126)
+	holder.size = Vector2(parent.size.x - 72, 78)
 	holder.add_theme_stylebox_override("panel", _panel_style(
 		Color(0.015, 0.045, 0.075, 0.94), Color(accent.r, accent.g, accent.b, 0.62)))
 	parent.add_child(holder)
-	var title := _mk_label(holder, "%s等级  Lv.%d" % [display_mode, level], 24, Vector2(24, 12))
+	var title := _mk_label(holder, "%s等级  Lv.%d" % [display_mode, level], 20, Vector2(22, 5))
 	title.name = "Level"
-	title.size = Vector2(430, 40)
+	title.size = Vector2(360, 30)
 	title.add_theme_color_override("font_color", accent)
 	var overall_percent := roundi(ratio * 100.0)
 	var value_text := "总进度 100%  ·  MAX" if level >= ExpSystem.MAX_LEVEL else \
 		"总进度 %d%%  ·  本级 %.0f/%d EXP" % [overall_percent, exp, need]
-	var value := _mk_label(holder, value_text, 16, Vector2(410, 16))
+	var value := _mk_label(holder, value_text, 14, Vector2(holder.size.x - 390, 6))
 	value.name = "ProgressValue"
-	value.size = Vector2(320, 36)
+	value.size = Vector2(360, 28)
 	value.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	var bar := ProgressBar.new()
 	bar.name = "%sExperienceProgress" % mode
-	bar.position = Vector2(24, 72)
-	bar.size = Vector2(712, 32)
+	bar.position = Vector2(22, 45)
+	bar.size = Vector2(holder.size.x - 44, 20)
 	bar.min_value = 0.0
 	bar.max_value = 1.0
 	bar.value = ratio
@@ -926,7 +1555,7 @@ func _build_action_tab(index: int) -> void:
 		"结束当前对局并返回歌曲选择界面。",
 		"保存设置后关闭程序。",
 	]
-	var local := clampi(index - 5, 0, 3)
+	var local := clampi(index - ACTION_TAB_START, 0, 3)
 	var card := Panel.new()
 	card.position = Vector2(170, 160)
 	card.size = Vector2(1040, 500)
@@ -1020,7 +1649,8 @@ func _build_bindings() -> void:
 			button.name = "Binding_%s" % action
 			button.size = Vector2(210, 96)
 			button.position = _binding_center(player, lane) - button.size * 0.5
-			button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+			button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			button.clip_contents = true
 			UiKit.skin_arcade_button(button, false, false, 18,
 				E5OriginalTheme.CYAN if player == 0 else E5OriginalTheme.MAGENTA)
 			button.pressed.connect(_start_rebind.bind(action))
@@ -1028,10 +1658,11 @@ func _build_bindings() -> void:
 			var icon := TextureRect.new()
 			icon.name = "PadIcon"
 			icon.texture = key_atlas.get("key_%s" % key_names[lane])
-			icon.position = Vector2(6, 8)
-			icon.size = Vector2(68, 68)
+			# 先关闭纹理原尺寸最小值，再设置控件尺寸；顺序反过来会被 122px 原图撑大。
 			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			icon.position = BINDING_ICON_POSITION
+			icon.size = BINDING_ICON_SIZE
 			icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			button.add_child(icon)
 			_binding_actions.append(action)
@@ -1057,12 +1688,14 @@ func _refresh_binding_buttons() -> void:
 		var button := _binding_buttons[i]
 		var selected_button := i == _binding_selected
 		var rebinding := action == _rebinding_action
-		button.text = "        %s\n        %s" % [_binding_title(action), _key_names(codes)]
+		button.text = "%s%s\n%s%s" % [BINDING_TEXT_INDENT, _binding_title(action),
+			BINDING_TEXT_INDENT, _key_names(codes)]
 		button.modulate = Color.WHITE
 		UiKit.skin_arcade_button(button, selected_button or rebinding, false, 18,
 			E5OriginalTheme.CYAN if action.begins_with("p1_") else E5OriginalTheme.MAGENTA)
 		if rebinding:
-			button.text = "%s\n等待按键…（ESC 取消）" % _binding_title(action)
+			button.text = "%s%s\n%s等待按键…" % [BINDING_TEXT_INDENT,
+				_binding_title(action), BINDING_TEXT_INDENT]
 
 
 func _start_rebind(action: String) -> void:
@@ -1242,6 +1875,16 @@ func _refresh_all() -> void:
 
 func _input(event: InputEvent) -> void:
 	if not visible:
+		return
+	if is_instance_valid(_resolution_dialog):
+		if event.is_action_pressed("ui_cancel"):
+			_cancel_resolution_restart()
+			get_viewport().set_input_as_handled()
+		return
+	if is_instance_valid(_reward_inventory_overlay):
+		if event.is_action_pressed("ui_cancel"):
+			_close_reward_inventory()
+			get_viewport().set_input_as_handled()
 		return
 	if _active_tab == 3 and _handle_binding_input(event):
 		get_viewport().set_input_as_handled()

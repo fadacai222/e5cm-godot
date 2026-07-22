@@ -1,5 +1,5 @@
 extends Control
-## 子模式：1200ms 逐个弹跳入场，第一次选择展开大图，第二次确认进入选歌。
+## 子模式：快速逐个弹跳入场，第一次选择展开大图，第二次确认进入选歌。
 
 const SUBMODE_BTNS := {
 	"学习": "UI-img/玩法选择界面/按钮/学习模式按钮.png", "表演": "UI-img/玩法选择界面/按钮/表演模式按钮.png",
@@ -23,8 +23,8 @@ const PAGE_ROWS := 3
 const PAGE_SIZE := PAGE_COLUMNS * PAGE_ROWS
 const GRID_ROW_GAP := 30.0
 const GRID_Y := 195.0
-const ENTRY_DURATION := 1.2
-const ENTRY_DELAY := 0.07
+const ENTRY_DURATION := 0.36
+const ENTRY_DELAY := 0.035
 const ENTRY_OFFSET := 190.0
 const ENTRY_TRANSITION := Tween.TRANS_QUINT
 const IDLE_AMPLITUDE := 6.0
@@ -198,9 +198,9 @@ func _build_page() -> void:
 		var tw := create_tween().set_parallel(true)
 		tw.tween_property(button, "position", target, ENTRY_DURATION).set_delay(i * ENTRY_DELAY) \
 			.set_trans(ENTRY_TRANSITION).set_ease(Tween.EASE_OUT)
-		tw.tween_property(button, "modulate:a", 1.0, 0.58).set_delay(i * ENTRY_DELAY) \
+		tw.tween_property(button, "modulate:a", 1.0, 0.24).set_delay(i * ENTRY_DELAY) \
 			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-		tw.tween_property(button, "scale", Vector2.ONE, 0.82).set_delay(i * ENTRY_DELAY) \
+		tw.tween_property(button, "scale", Vector2.ONE, 0.30).set_delay(i * ENTRY_DELAY) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	_entry_finished = false
 	var finish_delay := ENTRY_DURATION + maxf(0.0, float(items.size() - 1) * ENTRY_DELAY)

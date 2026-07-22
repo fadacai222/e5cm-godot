@@ -8,6 +8,37 @@ const TITLE_MAX_WIDTH := 960.0
 const TITLE_HEIGHT := 75.0
 const TITLE_CENTER := Vector2(960, 60)
 const CREDIT_SCALE := 0.82
+const ENTRY_START_OFFSET := 166.0
+const ENTRY_DURATION_SECONDS := 0.24
+const ENTRY_META := &"e5cm_top_bar_entry_played"
+
+
+## 场景完成加载后统一播放公共 Top 栏入场。重复调用不会重复播放。
+static func play_scene_entry(scene_root: Node) -> Tween:
+	if scene_root == null:
+		return null
+	var holder := scene_root.get_node_or_null("TopBar") as Control
+	if holder == null:
+		holder = scene_root.find_child("TopBar", true, false) as Control
+	return play_entry(holder)
+
+
+## 从屏幕上方快速滑入。动画不参与场景路由等待，不改变透明度，不做回弹。
+static func play_entry(holder: Control) -> Tween:
+	if holder == null or not is_instance_valid(holder) or not holder.is_inside_tree():
+		return null
+	if bool(holder.get_meta(ENTRY_META, false)):
+		return null
+	holder.set_meta(ENTRY_META, true)
+
+	var final_position := holder.position
+	holder.position = final_position - Vector2(0.0, maxf(ENTRY_START_OFFSET, holder.size.y + 16.0))
+
+	var tween := holder.create_tween()
+	tween.set_pause_mode(Tween.TWEEN_PAUSE_PROCESS)
+	tween.tween_property(holder, "position:y", final_position.y, ENTRY_DURATION_SECONDS) \
+		.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	return tween
 
 
 static func add(parent: Control, title_key: String) -> Control:

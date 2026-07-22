@@ -143,6 +143,8 @@ func _initialize() -> void:
 	var avatar := hud.get_node_or_null("Avatar") as TextureRect
 	var avatar_frame := hud.get_node_or_null("AvatarFrame") as TextureRect
 	var avatar_fx := hud.get_node_or_null("AvatarFrameFx") as TextureRect
+	var reward_avatar_frame := hud.get_node_or_null("EquippedRewardAvatarFrame") as Control
+	var reward_title_badge := hud.get_node_or_null("EquippedRewardTitleBadge") as Control
 	var vip_icon := hud.get_node_or_null("VipIcon") as TextureRect
 	var vip_particles := hud.get_node_or_null("VipParticles") as TextureRect
 	var nickname := hud.get_node_or_null("Nickname") as Label
@@ -160,13 +162,29 @@ func _initialize() -> void:
 		"头像框覆盖头像边缘但不遮住头像中心")
 	_check(avatar_fx != null and avatar_fx.texture != null and avatar_fx.visible,
 		"头像框 30 帧动效真实加载")
+	var reward_hole: Rect2 = reward_avatar_frame.call("avatar_hole_rect_for_test") \
+		if reward_avatar_frame != null else Rect2()
+	_check(reward_avatar_frame != null and reward_avatar_frame.z_index > avatar_frame.z_index
+		and reward_avatar_frame.z_index < avatar_fx.z_index
+		and reward_avatar_frame.size.x > avatar.size.x + 50.0
+		and reward_hole.get_center().distance_to(avatar.get_rect().get_center()) < 1.0
+		and absf(reward_hole.size.x - (avatar.size.x - 6.0)) < 2.0,
+		"奖励头像框按透明孔径包住头像边缘并保持在原框与动态特效之间",
+		"avatar=%s frame=%s hole=%s" % [avatar.get_rect(), reward_avatar_frame.get_rect(), reward_hole])
+	_check(reward_title_badge != null and nickname != null
+		and reward_title_badge.position.x >= nickname.position.x + nickname.size.x + 8.0
+		and reward_title_badge.position.y < nickname.position.y + nickname.size.y,
+		"游戏内装备称号位于玩家昵称右侧而非昵称下方",
+		"nickname=%s title=%s" % [nickname.get_rect(), reward_title_badge.get_rect()] \
+			if nickname != null and reward_title_badge != null else "missing")
 	_check(vip_icon != null and vip_icon.texture != null and vip_particles != null,
 		"头像区域包含 V/VIP 图标与粒子动效")
 	_check(nickname != null and nickname.position.distance_to(Vector2(438, 113)) < 2.0 \
-		and nickname.get_theme_font_size("font_size") == 31 \
+		and nickname.get_theme_font_size("font_size") <= 31 \
+		and nickname.get_theme_font_size("font_size") >= 14 \
 		and nickname.get_theme_constant("outline_size") == 0 \
 		and not nickname.clip_text,
-		"昵称使用原版位置、31px 无描边样式且不硬裁切",
+		"昵称保持原版位置与无描边样式，并为右侧美术称号自适应字号",
 		"%s / font=%d outline=%d" % [
 			nickname.position,
 			nickname.get_theme_font_size("font_size"),
@@ -177,7 +195,7 @@ func _initialize() -> void:
 	if gameplay.has_method("_apply_gameplay_nickname"):
 		var nickname_cases := [
 			{"text": "良", "expect_base": true},
-			{"text": "像素校准员", "expect_base": true},
+			{"text": "像素校准员", "expect_base": false},
 			{"text": "超长昵称验证一二三四五六七八九十", "expect_base": false},
 		]
 		for nickname_case in nickname_cases:

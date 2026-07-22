@@ -19,21 +19,23 @@ var _pause_chart_time := 0.0
 var _music_started_once := false
 var _music_finished_emitted := false
 var _last_chart_time := 0.0
+var _start_chart_sec := 0.0
 
 
 func _init(p_player: AudioStreamPlayer) -> void:
 	player = p_player
 
 
-func start(lead_in := 2.0) -> void:
-	lead_in_sec = lead_in
+func start(lead_in := 2.0, start_chart_sec := 0.0) -> void:
+	lead_in_sec = maxf(0.0, lead_in)
+	_start_chart_sec = maxf(0.0, start_chart_sec)
 	_started = true
 	_paused = false
 	_music_started_once = false
 	_music_finished_emitted = false
-	_last_chart_time = 0.0
+	_last_chart_time = _start_chart_sec
 	_start_tick_usec = Time.get_ticks_usec()
-	_smooth_time = -lead_in
+	_smooth_time = _start_chart_sec - lead_in_sec
 	if player != null:
 		player.stream_paused = false
 		if player.playing:
@@ -64,8 +66,9 @@ func resume() -> void:
 	_paused = false
 	if player != null:
 		player.stream_paused = false
-	if not _music_started_once and _pause_chart_time < 0.0:
-		_start_tick_usec = Time.get_ticks_usec() - int((_pause_chart_time + lead_in_sec) * 1e6)
+	if not _music_started_once and _pause_chart_time < _start_chart_sec:
+		var elapsed_from_countdown_start := _pause_chart_time - _start_chart_sec + lead_in_sec
+		_start_tick_usec = Time.get_ticks_usec() - int(elapsed_from_countdown_start * 1e6)
 
 
 func is_paused() -> bool:
@@ -83,6 +86,7 @@ func has_music_finished() -> bool:
 ## QA/parity 专用确定性定位：不依赖真实音频设备时钟。
 func seek_for_test(seconds: float, paused := true) -> void:
 	var target := maxf(0.0, seconds)
+	_start_chart_sec = target
 	_started = true
 	_paused = paused
 	_music_started_once = true
@@ -119,7 +123,7 @@ func get_chart_time_raw() -> float:
 		# 音频自然结束后不再退回倒计时系统时钟，更不能重新从 0 起播。
 		return _last_chart_time
 	var countdown := float(Time.get_ticks_usec() - _start_tick_usec) / 1e6 - lead_in_sec
-	return countdown + user_offset_sec
+	return _start_chart_sec + countdown + user_offset_sec
 
 
 ## 每帧调用：负时间归零点自动起播音乐；返回平滑后的谱面时间。
@@ -128,10 +132,10 @@ func tick() -> float:
 		if not _music_started_once:
 			var countdown := float(Time.get_ticks_usec() - _start_tick_usec) / 1e6 - lead_in_sec
 			if countdown >= 0.0 and player != null and player.stream != null:
-				player.play()
+				player.play(_start_chart_sec)
 				_music_started_once = true
 				_music_finished_emitted = false
-				_last_chart_time = maxf(0.0, user_offset_sec)
+				_last_chart_time = maxf(_start_chart_sec, _start_chart_sec + user_offset_sec)
 				music_started.emit()
 		elif player != null and not player.playing and not _music_finished_emitted:
 			_music_finished_emitted = true
@@ -145,3 +149,7 @@ func tick() -> float:
 	else:
 		_smooth_time = lerpf(_smooth_time, raw, 0.35)
 	return _smooth_time
+
+
+func start_chart_sec_for_test() -> float:
+	return _start_chart_sec

@@ -2,17 +2,20 @@ class_name FilterPanel
 extends Control
 ## 玩法/星级筛选页：功能沿用原版，视觉统一为 E5CM 街机切角 HUD。
 
-signal filter_changed(style: String, star: int)
+const SongLibraryScript := preload("res://autoload/song_library.gd")
+
+signal filter_changed(style: String, star: int, speed_filter: String)
 
 const PANEL_W := 980.0
-const PANEL_H := 720.0
+const PANEL_H := 820.0
 const PAD := 34.0
 const TITLE_ZONE := 154.0
 
 var _style := ""
 var _star := 0
+var _speed_filter := SongLibraryScript.SPEED_FILTER_ALL
 var _styles: Array = []
-var _stars_provider: Callable   # func(style: String) -> Array[int]
+var _stars_provider: Callable   # func(style: String, speed_filter: String) -> Array[int]
 
 var _mask: ColorRect
 var _panel: Panel
@@ -27,6 +30,7 @@ func _ready() -> void:
 	size = get_viewport_rect().size
 	visible = false
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	gui_input.connect(_on_mask_input)
 	z_index = 22
 
 	_mask = ColorRect.new()
@@ -64,7 +68,7 @@ func _ready() -> void:
 	title.name = "FilterTitle"
 	title.size = Vector2(460, 56)
 	var hint := UiKit.label(_panel,
-		"先选择玩法，再选择星级；再次点击已选项可取消", 17,
+		"玩法、星级与谱面特征可组合筛选；再次点击已选项可取消", 17,
 		Vector2(47, 98), E5OriginalTheme.MUTED, 0)
 	hint.name = "FilterHint"
 	hint.size = Vector2(580, 30)
@@ -85,13 +89,15 @@ func is_open() -> bool:
 	return visible
 
 
-## styles=当前列表出现的玩法集合；stars_provider(style)->Array 星级集合
-func open(styles: Array, stars_provider: Callable, style: String, star: int) -> void:
+## styles=当前列表出现的玩法集合；stars_provider(style, speed_filter)->Array 星级集合
+func open(styles: Array, stars_provider: Callable, style: String, star: int,
+		speed_filter := SongLibraryScript.SPEED_FILTER_ALL) -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_styles = styles
 	_stars_provider = stars_provider
 	_style = style
 	_star = star
+	_speed_filter = SongLibraryScript.normalize_speed_filter(str(speed_filter))
 	_rebuild()
 	visible = true
 	UiKit.animate_arcade_in(_panel, Vector2(-24, 0), 0.17)
@@ -113,10 +119,7 @@ func _rebuild() -> void:
 	_content.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_panel.add_child(_content)
 
-	var summary := _summary_text()
-	_lbl_summary.text = "CURRENT  %s" % (summary if not summary.is_empty() else "ALL SONGS")
-	_lbl_summary.add_theme_color_override("font_color",
-		E5OriginalTheme.GOLD if not summary.is_empty() else E5OriginalTheme.CYAN_SOFT)
+	_refresh_summary_label()
 
 	var zone_w := PANEL_W - PAD * 2.0
 	var y := PAD + TITLE_ZONE + 24.0
@@ -126,7 +129,7 @@ func _rebuild() -> void:
 	style_title.size = Vector2(430, 28)
 	var style_values: Array = [""]
 	style_values.append_array(_styles)
-	var bw := maxf(132.0, minf(196.0, zone_w * 0.18))
+	var bw := maxf(132.0, minf(142.0, zone_w * 0.155))
 	var bh := maxf(52.0, bw * 0.34)
 	var gap := maxf(10.0, bh * 0.22)
 	y = _grid(style_values, y, bw, bh, gap, zone_w,
@@ -138,14 +141,37 @@ func _rebuild() -> void:
 	var star_title := UiKit.label(_content, "02  星级筛选  /  DIFFICULTY", 17,
 		Vector2(PAD + 18.0, y - 36.0), E5OriginalTheme.CYAN_SOFT, 0)
 	star_title.size = Vector2(430, 28)
-	var stars: Array = _stars_provider.call(_style) if _stars_provider.is_valid() else []
+	var stars: Array = []
+	if _stars_provider.is_valid():
+		stars = _stars_provider.call(_style) \
+			if _stars_provider.get_argument_count() <= 1 \
+			else _stars_provider.call(_style, _speed_filter)
+	if _star > 0 and not stars.has(_star):
+		_star = 0
+		_refresh_summary_label()
+	var star_values: Array = [0]
+	star_values.append_array(stars)
 	var sw := maxf(88.0, minf(144.0, zone_w * 0.145))
 	var sh := maxf(60.0, sw * 0.56)
 	var sgap := maxf(8.0, sw * 0.07)
-	_grid(stars, y, sw, sh, sgap, zone_w,
-		func(v): return "★  %02d" % int(v),
-		func(v): return int(v) == _star and _star > 0,
+	y = _grid(star_values, y, sw, sh, sgap, zone_w,
+		func(v): return "ALL  全部星级" if int(v) == 0 else "★  %02d" % int(v),
+		func(v): return int(v) == _star,
 		_on_star_pressed)
+
+	y += 52.0
+	var feature_title := UiKit.label(_content, "03  谱面特征  /  CHART FEATURE", 17,
+		Vector2(PAD + 18.0, y - 36.0), E5OriginalTheme.CYAN_SOFT, 0)
+	feature_title.size = Vector2(430, 28)
+	var features := [
+		[SongLibraryScript.SPEED_FILTER_ALL, "ALL  全部谱面"],
+		[SongLibraryScript.SPEED_FILTER_VARIABLE, "BPM FX  变速谱"],
+		[SongLibraryScript.SPEED_FILTER_EXTREME, "NU ABO 类  极端变速"],
+	]
+	_grid(features, y, 238.0, 58.0, 14.0, zone_w,
+		func(v): return str((v as Array)[1]),
+		func(v): return str((v as Array)[0]) == _speed_filter,
+		_on_speed_pressed)
 
 
 ## 居中网格布局，返回网格底部 y。
@@ -181,10 +207,23 @@ func _filter_button(text: String, selected: bool, pos: Vector2, sz: Vector2,
 	b.size = sz
 	b.custom_minimum_size = sz
 	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	UiKit.skin_arcade_button(b, selected, false, 20,
-		E5OriginalTheme.MAGENTA if text.begins_with("★") else E5OriginalTheme.CYAN)
+	var accent := E5OriginalTheme.CYAN
+	if text.begins_with("★") or text.contains("变速谱"):
+		accent = E5OriginalTheme.MAGENTA
+	elif text.contains("极端变速"):
+		accent = E5OriginalTheme.GOLD
+	UiKit.skin_arcade_button(b, selected, false, 20, accent)
 	b.pressed.connect(on_press)
 	_content.add_child(b)
+
+
+func _refresh_summary_label() -> void:
+	if _lbl_summary == null:
+		return
+	var summary := _summary_text()
+	_lbl_summary.text = "CURRENT  %s" % (summary if not summary.is_empty() else "ALL SONGS")
+	_lbl_summary.add_theme_color_override("font_color",
+		E5OriginalTheme.GOLD if not summary.is_empty() else E5OriginalTheme.CYAN_SOFT)
 
 
 func _summary_text() -> String:
@@ -193,6 +232,9 @@ func _summary_text() -> String:
 		parts.append("%s" % _style)
 	if _star > 0:
 		parts.append("%d★" % _star)
+	var speed_label := SongLibraryScript.speed_filter_label(_speed_filter)
+	if not speed_label.is_empty():
+		parts.append(speed_label)
 	return "  /  ".join(parts)
 
 
@@ -201,7 +243,7 @@ func _on_style_pressed(v) -> void:
 	_style = "" if _style == s else s
 	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
 	_rebuild()
-	filter_changed.emit(_style, _star)
+	filter_changed.emit(_style, _star, _speed_filter)
 
 
 func _on_star_pressed(v) -> void:
@@ -209,7 +251,24 @@ func _on_star_pressed(v) -> void:
 	_star = 0 if _star == n else n
 	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
 	_rebuild()
-	filter_changed.emit(_style, _star)
+	filter_changed.emit(_style, _star, _speed_filter)
+
+
+func _on_speed_pressed(v) -> void:
+	var selected := SongLibraryScript.normalize_speed_filter(str((v as Array)[0]))
+	_speed_filter = SongLibraryScript.SPEED_FILTER_ALL \
+		if selected == _speed_filter and selected != SongLibraryScript.SPEED_FILTER_ALL else selected
+	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
+	_rebuild()
+	filter_changed.emit(_style, _star, _speed_filter)
+
+
+func speed_filter_for_test() -> String:
+	return _speed_filter
+
+
+func summary_text_for_test() -> String:
+	return _summary_text()
 
 
 func _on_mask_input(event: InputEvent) -> void:

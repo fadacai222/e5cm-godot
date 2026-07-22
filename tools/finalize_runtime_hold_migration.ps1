@@ -1,13 +1,22 @@
-[CmdletBinding(SupportsShouldProcess = $true)]
+﻿[CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$Source = 'C:\Users\admin\Desktop\e5cm_runtime.__long_task_hold__',
-    [string]$Destination = 'C:\Users\admin\Desktop\e5cm-godot\assets\e5cm_runtime',
-    [string]$ProjectRoot = 'C:\Users\admin\Desktop\e5cm-godot',
+    [string]$Source = '',
+    [string]$Destination = '',
+    [string]$ProjectRoot = '',
     [switch]$KeepSource
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    $ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+}
+if ([string]::IsNullOrWhiteSpace($Source)) {
+    $Source = Join-Path (Split-Path -Parent $ProjectRoot) 'e5cm_runtime.__long_task_hold__'
+}
+if ([string]::IsNullOrWhiteSpace($Destination)) {
+    $Destination = Join-Path $ProjectRoot 'assets\e5cm_runtime'
+}
 
 function Get-NormalizedFullPath {
     param([Parameter(Mandatory = $true)][string]$Path)

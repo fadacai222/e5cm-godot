@@ -47,6 +47,7 @@ func _ready() -> void:
 	visible = false
 	# 弹层打开期间根节点自身就是完整输入边界；隐藏节点不会参与命中。
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	gui_input.connect(_on_mask_input)
 	z_index = 20
 
 	_mask = ColorRect.new()
@@ -116,9 +117,13 @@ func is_open() -> bool:
 
 
 ## 打开（animate=入场动画）或刷新（切歌时 animate=false）
-func show_song(song: Dictionary, record: Dictionary, is_fav: bool, animate: bool) -> void:
+func show_song(song: Dictionary, record: Dictionary, is_fav: bool, animate: bool,
+		favorite_action_visible := true) -> void:
 	_rebuild_panel(song, record)
-	_update_fav_button(is_fav)
+	_btn_fav.visible = favorite_action_visible
+	_btn_fav.disabled = not favorite_action_visible
+	if favorite_action_visible:
+		_update_fav_button(is_fav)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	if not visible:
 		visible = true

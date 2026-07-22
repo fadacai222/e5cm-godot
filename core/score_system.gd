@@ -35,6 +35,8 @@ func settle_all(reports: Array) -> void:
 
 
 func settle_one(report: JudgeSystem.JudgeReport) -> void:
+	if report == null or not report.scoring:
+		return
 	last_judge = report.judge
 	last_diff_ms = report.time_diff_ms
 	if counts.has(report.judge):

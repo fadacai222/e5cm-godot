@@ -1,9 +1,15 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [string]$ScriptPath
+    [string]$ScriptPath,
+    [switch]$PreflightOnly
 )
 
-$content = Get-Content -Raw -Encoding UTF8 -LiteralPath $ScriptPath
-& ([ScriptBlock]::Create($content))
+$ErrorActionPreference = 'Stop'
+$resolvedScript = (Resolve-Path -LiteralPath $ScriptPath).Path
+if ($PreflightOnly) {
+    & $resolvedScript -PreflightOnly
+} else {
+    & $resolvedScript
+}
 exit $LASTEXITCODE

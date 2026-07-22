@@ -249,7 +249,7 @@ func _run() -> void:
 	GameState.flow.settle_song_exp(mode, progress, 2, "S", 0, 0, 0)
 	GameState.flow.current_round = 3
 	_scene()._finish_song(false)
-	# 全 P/全连会先播放约 3.2 秒成就动画，3 秒等待会把旧 Gameplay 当成结算节点。
+	# 全 P/全连会先播放原版约 5.17 秒六阶段动画，等待窗口必须覆盖完整演出。
 	var settlement := await _wait_for_scene("Settlement", 8.0)
 	if settlement == null or not is_instance_valid(settlement):
 		await _abort("timeout waiting for scene: Settlement")

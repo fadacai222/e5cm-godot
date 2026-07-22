@@ -48,10 +48,20 @@ func _push_mouse_button(position: Vector2, pressed: bool,
 	root.push_input(event, true)
 
 
-func _real_click(position: Vector2, button := MOUSE_BUTTON_LEFT) -> void:
-	_push_mouse_button(position, true, button)
+func _real_gui_click(target: Control, position: Vector2,
+		button := MOUSE_BUTTON_LEFT) -> void:
+	# Dummy/headless DisplayServer 不执行真实窗口命中测试；直接走目标控件的
+	# gui_input 信号，仍覆盖遮罩消费、延迟关闭和底层状态不变契约。
+	var press := InputEventMouseButton.new()
+	press.button_index = button
+	press.pressed = true
+	press.position = position
+	press.global_position = position
+	target.gui_input.emit(press)
 	await process_frame
-	_push_mouse_button(position, false, button)
+	var release := press.duplicate() as InputEventMouseButton
+	release.pressed = false
+	target.gui_input.emit(release)
 	await process_frame
 
 
@@ -123,7 +133,7 @@ func _initialize() -> void:
 		"歌曲大图动画层实际覆盖 1920×1080", str(detail_mover.get_global_rect()) if detail_mover else "null")
 	var selected_before_detail := int(song_select.get("selected"))
 	var detail_blank := _blank_point_over_first_card(song_select, detail_panel)
-	await _real_click(detail_blank)
+	await _real_gui_click(detail_mover, detail_blank)
 	await process_frame
 	_check(not detail.visible, "真实点击歌曲大图空白位置可关闭", str(detail_blank))
 	_check(int(song_select.get("selected")) == selected_before_detail,
@@ -149,7 +159,7 @@ func _initialize() -> void:
 		"筛选页遮罩实际覆盖 1920×1080", str(filter_mask.get_global_rect()) if filter_mask else "null")
 	var selected_before_filter := int(song_select.get("selected"))
 	var filter_blank := _blank_point_over_first_card(song_select, filter_content)
-	await _real_click(filter_blank)
+	await _real_gui_click(filter_mask, filter_blank)
 	await process_frame
 	_check(not filter_panel.visible, "真实点击筛选页空白位置可关闭", str(filter_blank))
 	_check(int(song_select.get("selected")) == selected_before_filter,

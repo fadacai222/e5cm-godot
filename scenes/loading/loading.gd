@@ -49,8 +49,9 @@ func _ready() -> void:
 			Vector2(_stars.size.x - 90, 8), Color(1, 0.85, 0.3))
 
 	_song_name.text = str(payload.get("name", ""))
-	_song_meta.text = "%s / %s    第 %d 把" % [str(payload.get("mode", "")),
-		str(payload.get("submode", "")), GameState.flow.current_round]
+	_song_meta.text = "%s / %s    %s" % [str(payload.get("mode", "")),
+		str(payload.get("submode", "")),
+		"训练室" if bool(payload.get("training_mode", false)) else "第 %d 把" % GameState.flow.current_round]
 
 	# 左下/右下记录区
 	var record := ProfileStore.get_song_record(str(payload.get("sm_key", "")))
@@ -123,10 +124,25 @@ func _unhandled_input(event: InputEvent) -> void:
 		_go()
 	elif event.is_action_pressed("ui_cancel"):
 		_done = true
-		if _payload_ready:
+		if bool(payload.get("training_mode", false)):
+			_return_to_training_setup()
+		elif _payload_ready:
 			SceneRouter.change_to("submode_select")
 		else:
 			SceneRouter.change_to("song_select", GameState.song_select_restore)
+
+
+func _return_to_training_setup() -> void:
+	var song_payload := payload.duplicate(true)
+	var config: Dictionary = song_payload.get("training_config", {})
+	for key in ["training_mode", "training_config", "run_eligibility"]:
+		song_payload.erase(key)
+	TrainingSession.finish(false)
+	SceneRouter.change_to("training_setup", {
+		"song": song_payload,
+		"training_config": config,
+		"summary": TrainingSession.last_summary(),
+	})
 
 
 func _go() -> void:

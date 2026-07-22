@@ -68,6 +68,32 @@ func _initialize() -> void:
 		_check(false, "Top 标题节点存在")
 	_check(holder.get_child_count() == 2, "不再创建右上角独立 Logo", str(holder.get_child_count()))
 
+	var final_top_y := holder.position.y
+	var initial_alpha := holder.modulate.a
+	var entry_tween: Tween = top_bar_script.play_entry(holder)
+	_check(entry_tween != null, "公共 Top 栏提供统一入场动画")
+	_check(holder.position.y <= final_top_y - 150.0,
+		"公共 Top 栏从屏幕上方开始落下", str(holder.position.y))
+	_check(top_bar_script.play_entry(holder) == null, "同一 Top 栏不会重复播放入场动画")
+	await create_timer(0.32).timeout
+	_check(absf(holder.position.y - final_top_y) < 0.5,
+		"公共 Top 栏动画结束后准确回到布局位置", str(holder.position.y))
+	_check(is_equal_approx(holder.modulate.a, initial_alpha),
+		"公共 Top 栏滑入期间不修改透明度", str(holder.modulate.a))
+	var router_source := FileAccess.get_file_as_string("res://autoload/scene_router.gd")
+	var entry_call_pos := router_source.find("TopBar.play_scene_entry(get_tree().current_scene)")
+	var fade_out_pos := router_source.find("tw2.tween_property(_fade_rect, \"color:a\", 0.0, FADE_FROM_BLACK_SECONDS)")
+	_check(entry_call_pos >= 0 and fade_out_pos >= 0 and entry_call_pos < fade_out_pos,
+		"Top 栏与黑屏淡出并行启动，不在淡出完成后追加等待")
+	var router_constants := (load("res://autoload/scene_router.gd") as Script).get_script_constant_map()
+	_check(float(router_constants.get("FADE_TO_BLACK_SECONDS", 1.0)) <= 0.06
+			and float(router_constants.get("FADE_FROM_BLACK_SECONDS", 1.0)) <= 0.10,
+		"公共场景黑屏转场总时长不超过 160ms", str(router_constants))
+	_check(router_source.contains("PREWARM_SCENE_KEYS")
+			and router_source.contains("load_threaded_request")
+			and router_source.contains("change_scene_to_packed"),
+		"公共菜单场景后台预热并优先使用 PackedScene")
+
 	_check(credit.text == "CREDIT：1/3", "公共 CREDIT 显示当前信用/每局需求", credit.text)
 	_check(credit.get_theme_color("font_color") == Color.WHITE, "公共 CREDIT 保持白色")
 	var row := canvas.get_node_or_null("BottomCreditCenter/BottomCreditRow") as HBoxContainer

@@ -1,12 +1,18 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
-    [string]$SourceRoot = 'C:\Users\admin\Desktop\E5CM-CG',
-    [string]$ProjectRoot = 'C:\Users\admin\Desktop\e5cm-godot',
+    [string]$SourceRoot = '',
+    [string]$ProjectRoot = '',
     [string]$EvidenceName = 'runtime-assets-20260717'
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+    $ProjectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+}
+if ([string]::IsNullOrWhiteSpace($SourceRoot)) {
+    $SourceRoot = Join-Path (Split-Path -Parent $ProjectRoot) 'E5CM-CG'
+}
 
 $runtimeDirectories = @('UI-img', '冷资源', 'backmovies', 'icon', 'songs')
 $allowedExtensions = @(

@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+  <defs>
+    <filter id="gc" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="gp" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="gg" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#b8fbff"/><stop offset=".42" stop-color="#1cecff"/><stop offset="1" stop-color="#1173e7"/></linearGradient>
+    <linearGradient id="pink" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffd0ff"/><stop offset=".42" stop-color="#ff48d8"/><stop offset="1" stop-color="#8739ff"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#fff4a3"/><stop offset=".36" stop-color="#ffd034"/><stop offset=".72" stop-color="#d98a00"/><stop offset="1" stop-color="#fff0a0"/></linearGradient>
+    <linearGradient id="prism" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#24eaff"/><stop offset=".25" stop-color="#7c5cff"/><stop offset=".5" stop-color="#ff4fd8"/><stop offset=".75" stop-color="#ffd84a"/><stop offset="1" stop-color="#30f3d2"/></linearGradient>
+  </defs>
+
+  <!-- 0 neon cyan -->
+  <g transform="translate(0 0)" filter="url(#gc)">
+    <circle cx="150" cy="150" r="104" fill="none" stroke="url(#cyan)" stroke-width="9"/>
+    <circle cx="150" cy="150" r="91" fill="none" stroke="#8ff7ff" stroke-opacity=".72" stroke-width="3"/>
+    <g fill="#31ecff"><path d="M150 25l16 21-16 15-16-15z"/><path d="M150 275l16-21-16-15-16 15z"/><path d="M25 150l21-16 15 16-15 16z"/><path d="M275 150l-21-16-15 16 15 16z"/></g>
+    <g stroke="#6df4ff" stroke-width="4"><path d="M84 52l12 18M216 52l-12 18M84 248l12-18M216 248l-12-18"/></g>
+  </g>
+
+  <!-- 1 neon magenta -->
+  <g transform="translate(300 0)" filter="url(#gp)">
+    <circle cx="150" cy="150" r="104" fill="none" stroke="url(#pink)" stroke-width="9"/>
+    <circle cx="150" cy="150" r="91" fill="none" stroke="#7d4cff" stroke-opacity=".85" stroke-width="3"/>
+    <g fill="#ff58df"><path d="M150 20l18 23-18 18-18-18z"/><path d="M150 280l18-23-18-18-18 18z"/><path d="M20 150l23-18 18 18-18 18z"/><path d="M280 150l-23-18-18 18 18 18z"/></g>
+    <g stroke="#ffa4f1" stroke-width="3"><path d="M67 70l17 14M233 70l-17 14M67 230l17-14M233 230l-17-14"/></g>
+  </g>
+
+  <!-- 2 minimal silver -->
+  <g transform="translate(600 0)">
+    <circle cx="150" cy="150" r="102" fill="none" stroke="#f2f6fb" stroke-width="6"/>
+    <circle cx="150" cy="150" r="93" fill="none" stroke="#7d8a9c" stroke-width="3"/>
+    <g fill="#dce4ef"><path d="M150 40l11 11-11 11-11-11z"/><path d="M150 260l11-11-11-11-11 11z"/><path d="M40 150l11-11 11 11-11 11z"/><path d="M260 150l-11-11-11 11 11 11z"/></g>
+    <path d="M86 59a108 108 0 0 1 128 0M86 241a108 108 0 0 0 128 0" fill="none" stroke="#98a7ba" stroke-width="4" stroke-dasharray="18 10"/>
+  </g>
+
+  <!-- 3 pulse -->
+  <g transform="translate(900 0)" filter="url(#gc)">
+    <circle cx="150" cy="150" r="99" fill="none" stroke="url(#cyan)" stroke-width="7"/>
+    <circle cx="150" cy="150" r="87" fill="none" stroke="#2eeaff" stroke-opacity=".6" stroke-width="2"/>
+    <path d="M36 150h28l10-24 12 49 14-77 14 105 14-71 14 38 12-20h92" fill="none" stroke="#5cf4ff" stroke-width="6" stroke-linejoin="round"/>
+    <g fill="#91fbff"><circle cx="52" cy="97" r="5"/><circle cx="248" cy="97" r="5"/><circle cx="52" cy="203" r="5"/><circle cx="248" cy="203" r="5"/></g>
+  </g>
+
+  <!-- 4 data grid -->
+  <g transform="translate(0 300)" filter="url(#gc)">
+    <circle cx="150" cy="150" r="102" fill="none" stroke="#19dfff" stroke-width="8" stroke-dasharray="23 8"/>
+    <circle cx="150" cy="150" r="88" fill="none" stroke="#6ff7ff" stroke-width="3"/>
+    <g fill="#24e9ff"><rect x="72" y="42" width="18" height="18"/><rect x="210" y="42" width="18" height="18"/><rect x="42" y="72" width="18" height="18"/><rect x="240" y="72" width="18" height="18"/><rect x="42" y="210" width="18" height="18"/><rect x="240" y="210" width="18" height="18"/><rect x="72" y="240" width="18" height="18"/><rect x="210" y="240" width="18" height="18"/></g>
+    <g stroke="#58f3ff" stroke-width="2" opacity=".75"><path d="M75 150h150M150 75v150"/><circle cx="150" cy="150" r="72" fill="none" stroke-dasharray="4 8"/></g>
+  </g>
+
+  <!-- 5 aurora -->
+  <g transform="translate(300 300)" filter="url(#gp)">
+    <circle cx="150" cy="150" r="103" fill="none" stroke="url(#prism)" stroke-width="11" stroke-dasharray="120 18 56 22"/>
+    <circle cx="150" cy="150" r="90" fill="none" stroke="#c47bff" stroke-opacity=".72" stroke-width="3"/>
+    <path d="M62 92c29-42 69-56 112-39 38 14 57 53 52 94M69 213c28 35 76 46 116 26 30-15 48-44 48-76" fill="none" stroke="#53efff" stroke-width="5" stroke-linecap="round"/>
+    <g fill="#fff"><circle cx="72" cy="81" r="4"/><circle cx="220" cy="88" r="4"/><circle cx="83" cy="226" r="4"/></g>
+  </g>
+
+  <!-- 6 perfect halo -->
+  <g transform="translate(600 300)" filter="url(#gp)">
+    <circle cx="150" cy="150" r="102" fill="none" stroke="url(#pink)" stroke-width="9"/>
+    <circle cx="150" cy="150" r="88" fill="none" stroke="#ffd1ff" stroke-opacity=".8" stroke-width="3"/>
+    <g fill="#ff7ee8"><path d="M150 22l10 18 20 4-15 14 4 20-19-10-19 10 4-20-15-14 20-4z"/><path d="M150 278l10-18 20-4-15-14 4-20-19 10-19-10 4 20-15 14 20 4z"/></g>
+    <g fill="#fff2ff"><path d="M43 75l6 11 12 2-9 8 2 12-11-6-11 6 2-12-9-8 12-2z"/><path d="M257 75l6 11 12 2-9 8 2 12-11-6-11 6 2-12-9-8 12-2z"/></g>
+  </g>
+
+  <!-- 7 prism -->
+  <g transform="translate(900 300)" filter="url(#gp)">
+    <circle cx="150" cy="150" r="103" fill="none" stroke="url(#prism)" stroke-width="12" stroke-dasharray="34 8"/>
+    <circle cx="150" cy="150" r="88" fill="none" stroke="#f5dbff" stroke-width="2"/>
+    <g fill="url(#prism)"><path d="M150 18l22 32-22 18-22-18z"/><path d="M150 282l22-32-22-18-22 18z"/><path d="M18 150l32-22 18 22-18 22z"/><path d="M282 150l-32-22-18 22 18 22z"/></g>
+  </g>
+
+  <!-- 8 flame -->
+  <g transform="translate(0 600)" filter="url(#gg)">
+    <circle cx="150" cy="150" r="101" fill="none" stroke="#ff7a14" stroke-width="8"/>
+    <circle cx="150" cy="150" r="88" fill="none" stroke="#ffd34a" stroke-width="3"/>
+    <g fill="#ff922e"><path d="M150 17c17 20 24 36 10 55l-10-9-10 9c-14-19-7-35 10-55z"/><path d="M150 283c17-20 24-36 10-55l-10 9-10-9c-14 19-7 35 10 55z"/></g>
+    <path d="M64 87l18 8-8 20 22-10M236 87l-18 8 8 20-22-10M64 213l18-8-8-20 22 10M236 213l-18-8 8-20-22 10" fill="none" stroke="#ffbf34" stroke-width="6"/>
+  </g>
+
+  <!-- 9 ice crystal -->
+  <g transform="translate(300 600)" filter="url(#gc)">
+    <circle cx="150" cy="150" r="101" fill="none" stroke="#79dfff" stroke-width="8"/>
+    <circle cx="150" cy="150" r="88" fill="none" stroke="#d8f7ff" stroke-width="3"/>
+    <g stroke="#9cecff" stroke-width="5"><path d="M150 19v58M150 223v58M19 150h58M223 150h58M57 57l41 41M202 202l41 41M243 57l-41 41M98 202l-41 41"/></g>
+    <g fill="#dff9ff"><path d="M150 22l13 22-13 22-13-22z"/><path d="M150 278l13-22-13-22-13 22z"/><path d="M22 150l22-13 22 13-22 13z"/><path d="M278 150l-22-13-22 13 22 13z"/></g>
+  </g>
+
+  <!-- 10 legendary laurel -->
+  <g transform="translate(600 600)" filter="url(#gg)">
+    <circle cx="150" cy="150" r="96" fill="none" stroke="url(#gold)" stroke-width="8"/>
+    <circle cx="150" cy="150" r="84" fill="none" stroke="#fff1a2" stroke-width="2"/>
+    <path d="M67 213c-22-29-31-64-22-99 7-27 23-51 45-68M233 213c22-29 31-64 22-99-7-27-23-51-45-68" fill="none" stroke="#ffd13c" stroke-width="8" stroke-dasharray="18 9"/>
+    <path d="M150 20l18 24 22 7-18 17 4 24-26-13-26 13 4-24-18-17 22-7z" fill="url(#gold)"/>
+    <path d="M150 280l18-28-18-18-18 18z" fill="#ffcd34"/>
+  </g>
+
+  <!-- 11 VIP crown -->
+  <g transform="translate(900 600)" filter="url(#gg)">
+    <circle cx="150" cy="150" r="96" fill="none" stroke="url(#gold)" stroke-width="10"/>
+    <circle cx="150" cy="150" r="82" fill="none" stroke="#fff2ad" stroke-width="3"/>
+    <path d="M105 50l18-28 27 27 27-27 18 28-9 26h-72z" fill="url(#gold)" stroke="#fff5bd" stroke-width="2"/>
+    <path d="M89 226c18 22 39 32 61 32s43-10 61-32" fill="none" stroke="#ffd23e" stroke-width="9"/>
+    <path d="M104 234h92l-10 22h-72z" fill="#d88a00"/>
+    <circle cx="150" cy="43" r="7" fill="#ff4fdb"/>
+  </g>
+</svg>

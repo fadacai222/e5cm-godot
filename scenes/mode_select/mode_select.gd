@@ -1,6 +1,8 @@
 extends Control
 ## 大模式：原版的“先选按钮、再点中央大图确认”两段式交互。
 
+const FeatureQuickAccessRailScript = preload("res://ui/feature_quick_access_rail.gd")
+
 const MODES := [
 	{"key": "花式", "btn": "UI-img/大模式选择界面/按钮/花式模式按钮.png", "banner": "UI-img/大模式选择界面/花式模式.png", "desc": "花式模式：全新的谱面风格及舞蹈风格，音乐的专业性更强", "open": true},
 	{"key": "竞速", "btn": "UI-img/大模式选择界面/按钮/竞速模式按钮.png", "banner": "UI-img/大模式选择界面/竞速模式.png", "desc": "竞速模式：挑战自我的速度极限", "open": true},
@@ -13,7 +15,7 @@ const BTN_SIZE := Vector2(248, 237)
 const BTN_GAP := 28.0
 const BTN_Y := 669.0
 const BANNER_RECT := Rect2(48, 151, 1824, 475)
-const ENTER_DURATION := 0.7
+const ENTER_DURATION := 0.32
 const ENTER_OFFSET := 120.0
 
 var _buttons: Array[TextureButton] = []
@@ -24,6 +26,8 @@ var _base_positions: Array[Vector2] = []
 var _selected := -1
 var _shake_t := -1.0
 var _banner_base_position := Vector2.ZERO
+var _feature_rail: FeatureQuickAccessRail
+var _feature_esc_menu: EscMenu
 
 
 func _ready() -> void:
@@ -31,6 +35,7 @@ func _ready() -> void:
 	SharedVideoBackground.continue_sequence()
 	_build_banner()
 	_build_buttons()
+	_build_feature_quick_access()
 	_update_credit_label(GameState.credits)
 	GameState.credits_changed.connect(_update_credit_label)
 	AudioDirector.play_bgm(AssetLoader.sound("音乐_UI"))
@@ -61,6 +66,40 @@ func _build_buttons() -> void:
 		tw.tween_property(button, "modulate:a", 1.0, ENTER_DURATION).set_delay(i * 0.06)
 		tw.tween_property(button, "position", target, ENTER_DURATION).set_delay(i * 0.06) \
 			.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+
+func _build_feature_quick_access() -> void:
+	ChallengeService.ensure_current()
+	ChallengeService.note_game_opened()
+	_feature_rail = FeatureQuickAccessRailScript.new()
+	_feature_rail.position = Vector2(1500, 18)
+	_feature_rail.z_index = 20
+	_feature_rail.training_requested.connect(_toggle_training_entry)
+	_feature_rail.challenge_requested.connect(_open_challenge_center)
+	$TopBar.add_child(_feature_rail)
+
+	_feature_esc_menu = EscMenu.new(false)
+	_feature_esc_menu.name = "FeatureEscMenu"
+	add_child(_feature_esc_menu)
+
+
+func _open_challenge_center() -> void:
+	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
+	_feature_esc_menu.open_menu(EscMenu.CHALLENGE_TAB_INDEX)
+
+
+func _toggle_training_entry() -> void:
+	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
+	if TrainingSession.is_entry_armed():
+		TrainingSession.cancel_entry()
+		_desc.text = "请点击选择您喜欢的游戏模式"
+		_desc.add_theme_color_override("font_color", Color.WHITE)
+	else:
+		TrainingSession.arm_entry()
+		_desc.text = "训练室已开启：请选择歌曲来源模式，训练成绩不会计入正式记录"
+		_desc.add_theme_color_override("font_color", Color(0.25, 0.95, 1.0))
+	if _feature_rail != null:
+		_feature_rail.refresh()
 
 
 func _update_credit_label(credits: int) -> void:
@@ -137,7 +176,7 @@ func _confirm_selected() -> void:
 		_shake_t = 0.0
 		return
 	GameState.big_mode = str(cfg["key"])
-	SceneRouter.change_to_with_zoom("submode_select", _banner, {}, 0.4)
+	SceneRouter.change_to_with_zoom("submode_select", _banner, {}, 0.18)
 
 
 func _process(delta: float) -> void:
@@ -152,9 +191,26 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if _feature_esc_menu != null and _feature_esc_menu.is_open():
+		return
+	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_C:
+		_open_challenge_center()
+		get_viewport().set_input_as_handled()
+		return
 	if event.is_action_pressed("pedal_left"):
 		_select(MODES.size() - 1 if _selected < 0 else (_selected - 1 + MODES.size()) % MODES.size())
 	elif event.is_action_pressed("pedal_right"):
 		_select(0 if _selected < 0 else (_selected + 1) % MODES.size())
 	elif event.is_action_pressed("pedal_confirm") or event.is_action_pressed("ui_accept"):
-		_confirm_selected()
+		if event.is_action_pressed("pedal_confirm") \
+				and Input.is_action_pressed("pedal_left") \
+				and Input.is_action_pressed("pedal_right"):
+			_open_challenge_center()
+		else:
+			_confirm_selected()
+	elif event.is_action_pressed("ui_cancel") and TrainingSession.is_entry_armed():
+		TrainingSession.cancel_entry()
+		_desc.text = "请点击选择您喜欢的游戏模式"
+		_desc.add_theme_color_override("font_color", Color.WHITE)
+		if _feature_rail != null:
+			_feature_rail.refresh()

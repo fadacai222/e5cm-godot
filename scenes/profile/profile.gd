@@ -8,6 +8,10 @@ const STAT_VALUE_COLOR := Color(1.0, 220.0 / 255.0, 80.0 / 255.0)
 const STAT_SONG_COLOR := Color(190.0 / 255.0, 140.0 / 255.0, 1.0)
 const WELCOME_TEXT := "e舞成名重构版（测试）为非盈利性的游戏；\n本游戏软件为交流、学习、测试使用，如有侵权，请率先联系我们。\n如果你有意参与我们的开发项目；\n请进人QQ群：1084318862\n进群后联系Emma_H。"
 const DISCLAIMER_TEXT := "本游戏设计初衷是为了让更多e舞玩家能在各地玩到e舞成名，本项目纯爱发电，没有任何盈利性质，如您发现有人倒卖本软件，请及时联系我们。"
+const RewardCenterScript := preload("res://ui/reward_center.gd")
+const RewardResolverScript := preload("res://ui/reward_appearance_resolver.gd")
+const RewardAvatarFrameScript := preload("res://ui/reward_avatar_frame.gd")
+const RewardTitleBadgeScript := preload("res://ui/reward_title_badge.gd")
 
 @onready var _avatar_view: TextureRect = $ProfileAvatar
 @onready var _nickname_label: Label = $ProfileNickname
@@ -20,6 +24,10 @@ var _editor_preview: TextureRect
 @onready var _leave_button: TextureButton = $LeaveButton
 @onready var _credit_label: Label = $BottomCreditCenter/BottomCreditRow/CreditLabel
 var _profile_fill_atlases := {}
+var _reward_button: Button
+var _reward_overlay: Control
+var _profile_reward_frame: RewardAvatarFrame
+var _profile_title_badge: RewardTitleBadge
 
 
 func _ready() -> void:
@@ -27,6 +35,7 @@ func _ready() -> void:
 	SharedVideoBackground.continue_sequence()
 	$ProfileTopPanel.texture = AssetLoader.tex("UI-img/个人中心-个人资料/上背景.png")
 	$ProfileBottomPanel.texture = AssetLoader.tex("UI-img/个人中心-个人资料/下背景.png")
+	_apply_circular_avatar_mask()
 	_refresh_profile_view()
 	if not ProfileStore.profile_changed.is_connected(_refresh_profile_view):
 		ProfileStore.profile_changed.connect(_refresh_profile_view)
@@ -35,8 +44,92 @@ func _ready() -> void:
 	_leave_button.pressed.connect(_confirm)
 	$AvatarEditButton.pressed.connect(_open_avatar_editor)
 	$NicknameEditButton.pressed.connect(_open_nickname_editor)
+	_build_reward_entry()
+	_build_equipped_identity_overlays()
 	_update_credit_label(GameState.credits)
 	GameState.credits_changed.connect(_update_credit_label)
+
+
+func _build_reward_entry() -> void:
+	_reward_button = Button.new()
+	_reward_button.name = "MyRewardsButton"
+	_reward_button.position = Vector2(1640, 174)
+	_reward_button.size = Vector2(220, 58)
+	_reward_button.z_index = 30
+	_reward_button.pressed.connect(_open_rewards)
+	add_child(_reward_button)
+	if not RewardService.inventory_changed.is_connected(_refresh_reward_entry):
+		RewardService.inventory_changed.connect(_refresh_reward_entry)
+	if not RewardService.equipped_changed.is_connected(_on_reward_equipped):
+		RewardService.equipped_changed.connect(_on_reward_equipped)
+	_refresh_reward_entry()
+
+
+func _refresh_reward_entry() -> void:
+	if _reward_button == null:
+		return
+	var unread := RewardService.unseen_count()
+	_reward_button.text = "我的奖励  %d%s" % [RewardService.owned_rewards(false).size(),
+		"  ·  NEW %d" % unread if unread > 0 else ""]
+	UiKit.skin_arcade_button(_reward_button, false, false, 20, E5OriginalTheme.MAGENTA)
+
+
+func _on_reward_equipped(_slot: String, _reward_id: String) -> void:
+	_refresh_reward_entry()
+	_refresh_equipped_identity_overlays()
+
+
+func _build_equipped_identity_overlays() -> void:
+	_profile_reward_frame = RewardAvatarFrameScript.new()
+	_profile_reward_frame.name = "EquippedAvatarFrame"
+	_profile_reward_frame.z_index = 8
+	add_child(_profile_reward_frame)
+	_profile_reward_frame.set_avatar_target(_avatar_view.get_rect(), 3.0)
+	_profile_title_badge = RewardTitleBadgeScript.new()
+	_profile_title_badge.name = "EquippedTitleBadge"
+	_profile_title_badge.position = Vector2(228, 456)
+	_profile_title_badge.size = Vector2(198, 38)
+	_profile_title_badge.z_index = 8
+	add_child(_profile_title_badge)
+	_refresh_equipped_identity_overlays()
+
+func _refresh_equipped_identity_overlays() -> void:
+	var appearance: Dictionary = RewardResolverScript.new().resolve_current()
+	if is_instance_valid(_profile_reward_frame):
+		_profile_reward_frame.set_appearance(appearance.get("avatar_frame", {}))
+	if is_instance_valid(_profile_title_badge):
+		_profile_title_badge.set_appearance(appearance.get("title", {}), 16)
+
+func _open_rewards() -> void:
+	_close_rewards()
+	_reward_overlay = ColorRect.new()
+	_reward_overlay.name = "RewardInventoryOverlay"
+	_reward_overlay.color = Color(0.0, 0.015, 0.045, 0.92)
+	_reward_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_reward_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_reward_overlay.z_index = 320
+	add_child(_reward_overlay)
+	_build_rewards_overlay_content()
+	AudioDirector.play_sfx(AssetLoader.sound("按钮音效"))
+
+
+func _build_rewards_overlay_content() -> void:
+	if not is_instance_valid(_reward_overlay):
+		return
+	for child in _reward_overlay.get_children():
+		child.free()
+	var panel: RewardCenter = RewardCenterScript.new()
+	panel.name = "RewardInventoryPanel"
+	panel.position = Vector2(180, 90)
+	panel.size = Vector2(1560, 900)
+	panel.close_requested.connect(_close_rewards)
+	_reward_overlay.add_child(panel)
+
+
+func _close_rewards() -> void:
+	if is_instance_valid(_reward_overlay):
+		_reward_overlay.queue_free()
+	_reward_overlay = null
 
 
 func _update_credit_label(credits: int) -> void:
@@ -100,6 +193,17 @@ func _label(text: String, font_size: int, source: Rect2, color := Color.WHITE,
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	add_child(label)
 	return label
+
+
+func _apply_circular_avatar_mask() -> void:
+	var avatar_shader := load("res://fx/circular_avatar_mask.gdshader") as Shader
+	if avatar_shader == null:
+		return
+	var material := ShaderMaterial.new()
+	material.shader = avatar_shader
+	_avatar_view.material = material
+	_avatar_view.modulate = Color.WHITE
+	_avatar_view.self_modulate = Color.WHITE
 
 
 func _build_identity() -> void:
@@ -489,8 +593,9 @@ func _build_software_info() -> void:
 	info.add_theme_font_size_override("normal_font_size", 18)
 	info.add_theme_font_size_override("bold_font_size", 18)
 	info.add_theme_constant_override("line_separation", 8)
+	var game_version := str(ProjectSettings.get_setting("application/config/version", "godot-2.0.3"))
 	info.text = (
-		"[color=#ffdc50]游戏版本：[/color][color=#ebebeb]e舞成名重构版4.12.1         [/color]"
+		"[color=#ffdc50]游戏版本：[/color][color=#ebebeb]%s         [/color]" % game_version
 		+ "[color=#ffdc50]开发团队：[/color][color=#ebebeb]程序工程师/策划/游戏制作人：良    UE/UI设计/策划：Emma_H（林曦）[/color]\n"
 		+ "[color=#ffdc50]特别鸣谢（排名不分先后）：[/color]\n"
 		+ "[color=#ebebeb]    Cyan（音效提供）|  飞翔e舞模拟器（曲谱资源提供）[/color]\n"
@@ -514,6 +619,11 @@ func _confirm() -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if is_instance_valid(_reward_overlay):
+		if event.is_action_pressed("ui_cancel"):
+			_close_rewards()
+		get_viewport().set_input_as_handled()
+		return
 	if is_instance_valid(_editor_overlay):
 		if event.is_action_pressed("ui_cancel"):
 			_close_editor()

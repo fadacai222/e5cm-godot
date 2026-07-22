@@ -7,6 +7,9 @@ signal credits_changed(credits: int)
 
 const CREDITS_PER_GAME := 3
 const CREDIT_STORE_PATH := "user://credits.cfg"
+const COIN_HOLD_DELAY_SEC := 0.30
+const COIN_HOLD_REPEAT_SEC := 0.06
+const COIN_HOLD_MAX_REPEATS_PER_FRAME := 16
 
 var credits := 0
 var credit_store_path := CREDIT_STORE_PATH
@@ -19,16 +22,75 @@ var flow := MatchFlow.new()
 # 选歌状态恢复载荷（结算返回选歌时使用）
 var song_select_restore := {}
 
+var _coin_hold_active := false
+var _coin_repeat_countdown := COIN_HOLD_DELAY_SEC
+
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	reload_credits()
+
+
+func _process(delta: float) -> void:
+	if not _coin_hold_active:
+		return
+	# 某些场景会消费按键松开事件；每帧核对物理状态，避免切场景后幽灵投币。
+	if not Input.is_action_pressed("coin"):
+		_end_coin_hold()
+		return
+	_tick_coin_hold(delta)
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.echo:
 		return
 	if event.is_action_pressed("coin"):
-		insert_coin()
+		_begin_coin_hold()
+	elif event.is_action_released("coin"):
+		_end_coin_hold()
+
+
+func _begin_coin_hold() -> bool:
+	if _coin_hold_active:
+		return false
+	_coin_hold_active = true
+	_coin_repeat_countdown = COIN_HOLD_DELAY_SEC
+	return insert_coin()
+
+
+func _end_coin_hold() -> void:
+	_coin_hold_active = false
+	_coin_repeat_countdown = COIN_HOLD_DELAY_SEC
+
+
+func _tick_coin_hold(delta: float) -> int:
+	if not _coin_hold_active or delta <= 0.0:
+		return 0
+	var remaining := delta
+	var repeated := 0
+	while remaining + 1e-6 >= _coin_repeat_countdown \
+			and repeated < COIN_HOLD_MAX_REPEATS_PER_FRAME:
+		remaining -= _coin_repeat_countdown
+		_coin_repeat_countdown = COIN_HOLD_REPEAT_SEC
+		if insert_coin():
+			repeated += 1
+		else:
+			break
+	_coin_repeat_countdown = maxf(0.0, _coin_repeat_countdown - remaining)
+	return repeated
+
+
+## 测试入口：复用正式长按状态机，不依赖真实键盘设备。
+func coin_hold_begin_for_test() -> bool:
+	return _begin_coin_hold()
+
+
+func coin_hold_tick_for_test(delta: float) -> int:
+	return _tick_coin_hold(delta)
+
+
+func coin_hold_end_for_test() -> void:
+	_end_coin_hold()
 
 
 func insert_coin(count: int = 1) -> bool:

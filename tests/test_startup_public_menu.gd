@@ -75,8 +75,35 @@ func _initialize() -> void:
 		_check(menu.get_node_or_null("Panel/Title") != null and
 			menu.get_node("Panel/Title").text == "系统菜单", "系统菜单标题与原版一致")
 		_check(menu.get_node_or_null("Panel/Options") != null and
-			menu.get_node("Panel/Options").get_child_count() == 4,
-			"系统菜单包含原版四项")
+			menu.get_node("Panel/Options").get_child_count() == 6,
+			"系统菜单包含投币、音频、显示模式、分辨率与退出六项")
+		_check(menu.get_node_or_null("OriginalSettingsTexture") is TextureRect,
+			"公共 ESC 复用选歌设置页结构纹理")
+		_check(menu.get_node_or_null("Panel/NavPanel/NavHudFrame") is E5HudFrame,
+			"公共 ESC 左侧导航使用统一切角 HUD")
+		_check(menu.get_node_or_null("Panel/ContentPanel/ContentHudFrame") is E5HudFrame,
+			"公共 ESC 右侧内容区使用统一切角 HUD")
+		_check(menu.get_node_or_null("Panel/ContentPanel/DetailCard/DetailHudFrame") is E5HudFrame,
+			"公共 ESC 详情区使用统一青洋红 HUD")
+		var first_option := menu.get_node_or_null("Panel/Options/Option0") as Button
+		var display_option := menu.get_node_or_null("Panel/Options/Option3") as Button
+		var resolution_option := menu.get_node_or_null("Panel/Options/Option4") as Button
+		var exit_option := menu.get_node_or_null("Panel/Options/Option5") as Button
+		_check(first_option != null and first_option.get_theme_stylebox("normal") is StyleBoxFlat,
+			"公共 ESC 选项使用共享街机按钮皮肤")
+		_check(display_option != null and display_option.text.contains("显示模式") \
+			and resolution_option != null and resolution_option.text.contains("分辨率"),
+			"1P/2P 小 ESC 菜单提供窗口/全屏与分辨率入口")
+		_check(exit_option != null and exit_option.get_theme_color("font_color") == E5OriginalTheme.TEXT,
+			"退出选项保留危险按钮结构且未退回默认皮肤")
+		var settings = root.get_node("SettingsStore")
+		settings.display_mode = "窗口"
+		menu.call("_toggle_display_mode")
+		_check(settings.display_mode == "独占全屏", "小 ESC 可切换 Windows 独占全屏")
+		settings.window_resolution = Vector2i(1920, 1080)
+		menu.call("_step_resolution", 1)
+		_check(settings.window_resolution == Vector2i(2560, 1440),
+			"小 ESC 可循环切换输出分辨率", settings.resolution_display_name())
 		menu.call("close_menu")
 		_check(not menu.visible, "ESC 系统菜单可关闭")
 		root.remove_child(menu)

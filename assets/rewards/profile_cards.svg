@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2400" height="400" viewBox="0 0 2400 400">
+  <defs>
+    <filter id="glow" x="-20%" y="-40%" width="140%" height="180%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#03172f"/><stop offset=".5" stop-color="#062b52"/><stop offset="1" stop-color="#021126"/></linearGradient>
+    <linearGradient id="pink" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#16042b"/><stop offset=".5" stop-color="#3c0b4e"/><stop offset="1" stop-color="#0d0622"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#130d01"/><stop offset=".5" stop-color="#302000"/><stop offset="1" stop-color="#090701"/></linearGradient>
+    <linearGradient id="aurora" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#05243c"/><stop offset=".35" stop-color="#087c83"/><stop offset=".68" stop-color="#452970"/><stop offset="1" stop-color="#0d122e"/></linearGradient>
+    <linearGradient id="prism" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#00dfff"/><stop offset=".22" stop-color="#6b5cff"/><stop offset=".46" stop-color="#ff42d6"/><stop offset=".68" stop-color="#ffd044"/><stop offset="1" stop-color="#20f2c8"/></linearGradient>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><path d="M24 0H0v24" fill="none" stroke="#39dff7" stroke-opacity=".13" stroke-width="1"/></pattern>
+  </defs>
+
+  <!-- 0 BLUE GRID -->
+  <g transform="translate(0 0)">
+    <rect x="8" y="8" width="584" height="184" rx="8" fill="url(#blue)" stroke="#22e7ff" stroke-width="4"/>
+    <rect x="12" y="12" width="576" height="176" rx="6" fill="url(#grid)"/>
+    <path d="M18 42h170l22-22h188l22 22h162M18 158h135l20 20h254l20-20h135" fill="none" stroke="#5ef1ff" stroke-opacity=".7" stroke-width="2"/>
+    <path d="M445 126l18-34 16 48 17-72 18 98 18-57 15 31 16-14h25" fill="none" stroke="#28eaff" stroke-width="3"/>
+  </g>
+
+  <!-- 1 NEON WAVE -->
+  <g transform="translate(600 0)">
+    <rect x="8" y="8" width="584" height="184" rx="8" fill="url(#pink)" stroke="#ff49dc" stroke-width="4"/>
+    <path d="M12 135c86-100 151 54 235-27s158 61 262-26 73 22 79 28" fill="none" stroke="#ff52de" stroke-opacity=".7" stroke-width="4"/>
+    <path d="M12 151c92-80 164 50 242-10s150 49 252-25 73 22 82 27" fill="none" stroke="#7458ff" stroke-opacity=".72" stroke-width="3"/>
+    <g fill="#ff80e8" opacity=".8"><circle cx="435" cy="45" r="3"/><circle cx="473" cy="68" r="2"/><circle cx="530" cy="36" r="3"/></g>
+    <path d="M430 164v-26M442 164v-41M454 164v-18M466 164v-54M478 164v-33M490 164v-62M502 164v-24M514 164v-46M526 164v-30M538 164v-57M550 164v-20M562 164v-38" stroke="#ff4ddb" stroke-width="5"/>
+  </g>
+
+  <!-- 2 SPEED LIGHTNING -->
+  <g transform="translate(1200 0)">
+    <rect x="8" y="8" width="584" height="184" rx="8" fill="#03172d" stroke="#20dfff" stroke-width="4"/>
+    <path d="M15 40h360l30-26h174M15 160h300l24 24h240" fill="none" stroke="#22bfff" stroke-width="3"/>
+    <path d="M432 17l-52 78h43l-25 84 98-111h-48l34-51z" fill="#1caeff" stroke="#8af7ff" stroke-width="3" filter="url(#glow)"/>
+    <path d="M43 67h286M28 91h335M55 116h270M38 142h240" stroke="#1778c8" stroke-width="4" opacity=".7"/>
+    <path d="M498 146a46 46 0 1 1 65-5" fill="none" stroke="#53edff" stroke-width="5"/><path d="M531 150l25-20" stroke="#fff" stroke-width="4"/>
+  </g>
+
+  <!-- 3 STAGE -->
+  <g transform="translate(1800 0)">
+    <rect x="8" y="8" width="584" height="184" rx="8" fill="#25052e" stroke="#ff4bd9" stroke-width="4"/>
+    <path d="M48 13l60 120M170 13l-38 120M430 13l-38 120M552 13l-60 120" stroke="#ff8bea" stroke-opacity=".34" stroke-width="18"/>
+    <path d="M350 165c18-28 35-39 52-39s34 11 51 39c17-28 34-39 51-39s34 11 51 39" fill="#ff4fd4" fill-opacity=".22"/>
+    <g fill="#ff81e4"><circle cx="69" cy="37" r="5"/><circle cx="151" cy="58" r="4"/><circle cx="480" cy="43" r="5"/><circle cx="543" cy="67" r="4"/></g>
+    <path d="M418 169v-18M431 169v-34M444 169v-52M457 169v-26M470 169v-61M483 169v-37M496 169v-48M509 169v-22M522 169v-43M535 169v-31M548 169v-54" stroke="#ff54da" stroke-width="5"/>
+  </g>
+
+  <!-- 4 DIY BLUEPRINT -->
+  <g transform="translate(0 200)">
+    <rect x="8" y="8" width="584" height="184" rx="8" fill="#021b36" stroke="#1ae8ff" stroke-width="4"/>
+    <rect x="12" y="12" width="576" height="176" fill="url(#grid)"/>
+    <g fill="none" stroke="#48eaff" stroke-opacity=".7" stroke-width="2"><circle cx="472" cy="98" r="54"/><circle cx="472" cy="98" r="36"/><path d="M418 98h108M472 44v108M55 42h248v118H55zM75 62h108v78H75zM205 62h78v35h-78zM205 109h78v31h-78z"/></g>
+    <g fill="#22e9ff" opacity=".75"><rect x="538" y="40" width="18" height="18"/><rect x="538" y="68" width="18" height="18"/><rect x="538" y="96" width="18" height="18"/><rect x="538" y="124" width="18" height="18"/></g>
+  </g>
+
+  <!-- 5 AURORA CITY -->
+  <g transform="translate(600 200)">
+    <rect x="8" y="8" width="584" height="184" rx="8" fill="url(#aurora)" stroke="#23ecff" stroke-width="4"/>
+    <path d="M20 45c86-61 166 50 238-15s149 46 233-9 73 8 91 18" fill="none" stroke="#51ffcf" stroke-opacity=".58" stroke-width="18"/>
+    <path d="M20 59c90-47 154 45 229-9s148 38 234-12 82 10 99 21" fill="none" stroke="#a956ff" stroke-opacity=".46" stroke-width="15"/>
+    <path d="M334 169v-38h18v38M358 169v-62h24v62M389 169v-48h18v48M413 169v-83h32v83M451 169v-55h25v55M482 169v-73h29v73M518 169v-42h22v42M548 169v-91h27v91" fill="#061426" stroke="#37eaff" stroke-width="2"/>
+  </g>
+
+  <!-- 6 BLACK GOLD VIP -->
+  <g transform="translate(1200 200)">
+    <rect x="8" y="8" width="584" height="184" rx="8" fill="url(#gold)" stroke="#ffd13e" stroke-width="5" filter="url(#glow)"/>
+    <path d="M16 44h155l24-28h210l24 28h155M16 156h155l24 28h210l24-28h155" fill="none" stroke="#ffdb56" stroke-width="3"/>
+    <path d="M432 57l21-34 24 30 25-30 21 34-11 34h-69z" fill="#ffd13c"/><path d="M443 101h69l-9 22h-51z" fill="#ad7000"/>
+    <path d="M411 165v-24M423 165v-44M435 165v-31M447 165v-62M459 165v-40M471 165v-72M483 165v-28M495 165v-53M507 165v-35M519 165v-67M531 165v-21M543 165v-48" stroke="#ffce35" stroke-width="5"/>
+    <text x="315" y="133" fill="#ffd84a" fill-opacity=".14" font-size="82" font-family="sans-serif" font-weight="700">VIP</text>
+  </g>
+
+  <!-- 7 PRISM MYTH -->
+  <g transform="translate(1800 200)">
+    <rect x="8" y="8" width="584" height="184" rx="8" fill="#110725" stroke="url(#prism)" stroke-width="5" filter="url(#glow)"/>
+    <path d="M312 17l66 52-52 45 59 70M382 16l61 44-33 42 70 82M452 16l47 38-28 39 82 67" fill="none" stroke="url(#prism)" stroke-width="10" stroke-opacity=".65"/>
+    <g fill="url(#prism)" opacity=".88"><path d="M381 36l28 26-18 31-36-9-3-36z"/><path d="M471 91l25 20-12 34-38 3-11-31z"/><path d="M533 31l24 17-5 29-31 8-19-22z"/></g>
+    <path d="M420 166v-24M432 166v-42M444 166v-27M456 166v-58M468 166v-34M480 166v-68M492 166v-21M504 166v-49M516 166v-31M528 166v-62M540 166v-25M552 166v-44" stroke="#ff4ddc" stroke-width="5"/>
+  </g>
+</svg>

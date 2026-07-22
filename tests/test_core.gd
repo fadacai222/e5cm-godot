@@ -222,30 +222,36 @@ func _test_match_flow() -> void:
 	_check(not s1["三把S赠送"] and not s2["三把S赠送"] and s3["三把S赠送"] and s3["结算后S数"] == 3,
 		"三把S在第3把触发赠送第四把", str(s3))
 
-	# 经验：3 首 S 全P —— 第1、2把只缓存，第3把统一入账
+	# 经验：3 首 S 全P —— 每首立即入账，局内仍保留连续 S 倍率与整局汇总。
 	var flow2 = MatchFlowScript.new()
 	flow2.start_new_match()
 	var progress := ExpSystemScript.default_progress()
 	var r1: Dictionary = flow2.settle_song_exp("竞速", progress, 1, "S", 0, 0, 0)
-	_check(str(r1["结算类型"]) == "正式局缓存" and int(r1["经验增加值"]) == 0
-		and int(r1["缓存经验值"]) == 30, "第1把 S全P 缓存30经验（15×1×2）不入账", str(r1["缓存经验值"]))
-	_check(bool(r1.get("预览缓存", false)) and bool(r1.get("显示奖励窗", false)) \
-		and int(r1.get("正式局总经验", 0)) == 30 and r1.get("经验结算") is Dictionary,
-		"第1把显示30经验缓存增长预览，但不写入存档", str(r1))
+	_check(str(r1["结算类型"]) == "正式局单曲入账" and int(r1["经验增加值"]) == 30
+		and int(r1["缓存经验值"]) == 30, "第1把 S全P 30经验立即入账（15×1×2）", str(r1))
+	_check(not bool(r1.get("预览缓存", false)) and bool(r1.get("显示奖励窗", false)) \
+		and int(r1.get("正式局总经验", 0)) == 30 and int(r1["模式进度"].get("等级", 0)) == 7,
+		"第1把正式进度可直接保存，退出游戏也不丢经验", str(r1))
+	progress = r1["模式进度"]
 	var r2: Dictionary = flow2.settle_song_exp("竞速", progress, 2, "S", 0, 0, 0)
-	_check(int(r2["缓存经验值"]) == 60, "第2把 连续S×2 缓存60经验（15×2×2）", str(r2["缓存经验值"]))
-	_check(bool(r2.get("预览缓存", false)) and int(r2.get("正式局总经验", 0)) == 90,
-		"第2把显示累计90经验缓存预览", str(r2.get("正式局总经验", 0)))
+	_check(int(r2["经验增加值"]) == 60 and int(r2["缓存经验值"]) == 60,
+		"第2把 连续S×2 的60经验立即入账（15×2×2）", str(r2))
+	_check(not bool(r2.get("预览缓存", false)) and int(r2.get("正式局总经验", 0)) == 90
+		and int(r2["模式进度"].get("等级", 0)) == 16,
+		"第2把显示整局累计90经验，但只追加本首60经验", str(r2))
+	progress = r2["模式进度"]
 	var r3: Dictionary = flow2.settle_song_exp("竞速", progress, 3, "S", 0, 0, 0)
 	_check(str(r3["结算类型"]) == "正式局结算" and int(r3["正式局总经验"]) == 150
-		and bool(r3["显示奖励窗"]), "第3把统一结算 30+60+60=150 经验", str(r3["正式局总经验"]))
-	# 150 经验从1级：12级前每级5 → 升11级到12级余95? 手算：等级1~12每级5共60（升到13），13级起每级10
-	# 150 = 60(1→13) + 90(13→22) -> 22级余0? 13→22 是 9 级 90 经验，合计恰好 150，升到 22 级余 0
-	var deposit: Dictionary = r3["经验结算"]
-	_check(int(deposit["等级"]) == 22 and float(deposit["经验"]) < 1e-6,
-		"150经验 1级→22级余0", "等级=%s 经验=%s" % [deposit["等级"], deposit["经验"]])
+		and int(r3["经验增加值"]) == 60 and bool(r3["显示奖励窗"]),
+		"第3把整局汇总150经验，本首60经验不重复入账", str(r3))
+	# 三首累计仍为 150：等级1~12每级5共60，13~21每级10共90，最终22级0经验。
+	var final_progress: Dictionary = r3["模式进度"]
+	_check(int(final_progress["等级"]) == 22 and float(final_progress["经验"]) < 1e-6
+		and int(final_progress.get("累计歌曲", 0)) == 3,
+		"三首累计150经验 1级→22级余0且计数=3", str(final_progress))
 
 	# 第4把赠送歌：静默入账
+	progress = r3["模式进度"]
 	var r4: Dictionary = flow2.settle_song_exp("竞速", progress, 4, "A", 1, 0, 0)
 	_check(str(r4["结算类型"]) == "赠送歌静默入账" and not bool(r4["显示奖励窗"])
 		and int(r4["单首歌结果"]["最终经验"]) == 7, "第4把赠送歌 A=7经验 静默入账", str(r4["单首歌结果"]["最终经验"]))

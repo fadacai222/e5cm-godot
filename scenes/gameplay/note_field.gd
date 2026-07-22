@@ -19,6 +19,10 @@ var track_count := 5
 var scroll_speed_mult := 4.0
 var lane_width := 132.0
 var field_center_x := 960.0
+var _bpm_scroll_enabled := false
+var _bpm_timeline: Array = []
+var _bpm_offset := 0.0
+var _bpm_base := 120.0
 
 var _arrow_atlas := {}
 var _key_atlas := {}
@@ -49,12 +53,14 @@ var _hold_tile_cache_order: Array[String] = []
 var _hand_pressed := {}          # "zone:side" -> bool
 var _active_hand_effects: Array[FrameAnim] = []
 var _visual_paused := false
+var _heavy_effects_enabled := true
 const COMBO_GOLD_MAX_LEVEL := 3
 const COMBO_LANE_TOP_Y := 110.0
 # 故意延伸到 1080p 画布外 12px，避免缩放/裁切时底部露出空缝。
 const COMBO_LANE_BOTTOM_Y := 1092.0
 
 var _combo_gold_fx_enabled := false
+var _combo_arrow_overlay_enabled := true
 var _combo_lane_fx_enabled := false
 var _combo_gold_fx_level := 0
 var _combo_gold_fx_elapsed := 0.0
@@ -157,6 +163,31 @@ func setup(p_track_count: int, p_speed_mult: float, p_couple_mode := false) -> v
 	_apply_combo_gold_to_current_sprites()
 
 
+func configure_bpm_scroll(bpms: Array, timeline: Array, offset: float) -> void:
+	_bpm_scroll_enabled = false
+	_bpm_timeline = timeline.duplicate(true)
+	_bpm_offset = offset if is_finite(offset) else 0.0
+	_bpm_base = 120.0
+	for raw_entry in bpms:
+		if raw_entry is Array and raw_entry.size() >= 2:
+			var bpm := float(raw_entry[1])
+			if is_finite(bpm) and bpm > 0.0:
+				_bpm_base = bpm
+				break
+	_bpm_scroll_enabled = not _bpm_timeline.is_empty() and _bpm_base > 0.0
+
+
+func clear_bpm_scroll() -> void:
+	_bpm_scroll_enabled = false
+	_bpm_timeline.clear()
+	_bpm_offset = 0.0
+	_bpm_base = 120.0
+
+
+func bpm_scroll_enabled_for_test() -> bool:
+	return _bpm_scroll_enabled
+
+
 func _player_for_track(track: int) -> int:
 	return 2 if _couple_mode and track >= 5 else 1
 
@@ -179,6 +210,7 @@ func _arrow_texture(kind: String, suffix: String, player := 1) -> Texture2D:
 
 
 ## key_effect 帧分组：数字前缀升序前4组 = hand / lb / lt / cc（对应旧 击中特效序列帧.py）
+## 历史皮肤同时存在 4 位和 5 位以上帧编号，不能写死位数。
 func _build_fx_groups_from_atlas(source_atlas: Dictionary) -> Dictionary:
 	var groups := {}
 	var prefixes := {}
@@ -187,7 +219,7 @@ func _build_fx_groups_from_atlas(source_atlas: Dictionary) -> Dictionary:
 		if not text.ends_with(".png"):
 			continue
 		var re := RegEx.new()
-		re.compile("^(.*)_(\\d{4})\\.png$")
+		re.compile("^(.*)_(\\d+)\\.png$")
 		var m := re.search(text)
 		if m == null:
 			continue
@@ -232,6 +264,18 @@ func _scroll_y(event_sec: float, chart_time: float, speed: float) -> float:
 	return _receptor_y() + (event_sec - chart_time) * speed * direction
 
 
+func _scroll_y_event(event_sec: float, event_beat: float,
+		chart_time: float, speed: float) -> float:
+	if not _bpm_scroll_enabled or not is_finite(event_beat):
+		return _scroll_y(event_sec, chart_time, speed)
+	var current_beat := SmParser.sec_to_beat(chart_time + _bpm_offset, _bpm_timeline)
+	if not is_finite(current_beat):
+		return _scroll_y(event_sec, chart_time, speed)
+	var pixels_per_beat := speed * 60.0 / maxf(0.001, _bpm_base)
+	var direction := -1.0 if _is_reverse() else 1.0
+	return _receptor_y() + (event_beat - current_beat) * pixels_per_beat * direction
+
+
 func _visual_x(base_x: float, chart_time: float, event_sec: float, lane: int) -> float:
 	if SettingsStore.track_mode != "摇摆" or SettingsStore.performance_mode:
 		return base_x
@@ -262,6 +306,11 @@ func receptor_y_for_test() -> float:
 
 func scroll_y_for_test(event_sec: float, chart_time: float, speed: float) -> float:
 	return _scroll_y(event_sec, chart_time, speed)
+
+
+func scroll_y_for_event_test(event_sec: float, event_beat: float,
+		chart_time: float, speed: float) -> float:
+	return _scroll_y_event(event_sec, event_beat, chart_time, speed)
 
 
 func note_visual_for_test(base_x: float, y: float, chart_time: float,
@@ -504,8 +553,8 @@ func _rebuild_combo_lane_fx() -> void:
 func _update_combo_lane_fx_style() -> void:
 	if not is_instance_valid(_combo_lane_fx_root):
 		return
-	var enabled := _combo_gold_fx_enabled and _combo_lane_fx_enabled \
-		and _combo_gold_fx_level > 0
+	var enabled := _heavy_effects_enabled and _combo_gold_fx_enabled \
+		and _combo_lane_fx_enabled and _combo_gold_fx_level > 0
 	_combo_lane_fx_root.visible = enabled
 	var progress := clampf(float(maxi(1, _combo_gold_fx_level) - 1) / 2.0, 0.0, 1.0)
 
@@ -598,12 +647,37 @@ func combo_lane_flow_intensity_for_test() -> float:
 ## 兼容旧调用；显式启用时沿用旧行为，同时打开箭头与轨道层。
 ## Gameplay 的 50/100 阶梯逻辑使用两个独立 setter，不走此兼容入口。
 func set_combo_gold_fx_enabled(enabled: bool, _duration := 0.0) -> void:
+	_combo_arrow_overlay_enabled = enabled
 	set_combo_gold_fx_level(1 if enabled else 0)
 	set_combo_lane_fx_enabled(enabled)
 
 
+func set_heavy_effects_enabled(enabled: bool) -> void:
+	if _heavy_effects_enabled == enabled:
+		return
+	_heavy_effects_enabled = enabled
+	if enabled:
+		return
+	set_combo_gold_fx_level(0)
+	set_combo_lane_fx_enabled(false)
+	for item in _render_hand_notes:
+		item["active_effect"] = null
+	for child in get_children():
+		if child is FrameAnim:
+			var anim := child as FrameAnim
+			anim.auto_free = false
+			anim.stop()
+			anim.queue_free()
+	_active_hand_effects.clear()
+	_hand_pressed.clear()
+
+
+func heavy_effects_enabled_for_test() -> bool:
+	return _heavy_effects_enabled
+
+
 func set_combo_gold_fx_level(level: int) -> void:
-	var next_level := clampi(level, 0, COMBO_GOLD_MAX_LEVEL)
+	var next_level := clampi(level, 0, COMBO_GOLD_MAX_LEVEL) if _heavy_effects_enabled else 0
 	var was_enabled := _combo_gold_fx_enabled
 	_combo_gold_fx_level = next_level
 	_combo_gold_fx_enabled = next_level > 0
@@ -626,13 +700,23 @@ func set_combo_gold_fx_level(level: int) -> void:
 	_apply_combo_gold_to_current_sprites()
 
 
+func set_combo_arrow_overlay_enabled(enabled: bool) -> void:
+	_combo_arrow_overlay_enabled = _heavy_effects_enabled and enabled
+	_apply_combo_gold_to_current_sprites()
+
+
+func combo_arrow_overlay_enabled_for_test() -> bool:
+	return _combo_arrow_overlay_enabled
+
+
 func set_combo_lane_fx_enabled(enabled: bool) -> void:
-	_combo_lane_fx_enabled = enabled and _combo_gold_fx_enabled and _combo_gold_fx_level > 0
+	_combo_lane_fx_enabled = _heavy_effects_enabled and enabled \
+		and _combo_gold_fx_enabled and _combo_gold_fx_level > 0
 	_update_combo_lane_fx_style()
 
 
 func is_combo_gold_fx_enabled() -> bool:
-	return _combo_gold_fx_enabled
+	return _combo_gold_fx_enabled and _combo_arrow_overlay_enabled
 
 
 func is_combo_lane_fx_enabled() -> bool:
@@ -706,7 +790,8 @@ func _update_combo_gold_fx(delta: float) -> void:
 func _sync_combo_gold_material(sprite: Sprite2D) -> void:
 	if sprite == null:
 		return
-	if _combo_gold_fx_enabled and _combo_gold_material != null:
+	if _combo_gold_fx_enabled and _combo_arrow_overlay_enabled \
+			and _combo_gold_material != null:
 		sprite.material = _combo_gold_material
 	elif sprite.material == _combo_gold_material:
 		sprite.material = null
@@ -731,6 +816,8 @@ func _apply_combo_gold_to_current_sprites() -> void:
 
 
 func spawn_hit_effect(track: int) -> void:
+	if not _heavy_effects_enabled:
+		return
 	if track < 0 or track >= _lane_x.size():
 		return
 	var groups := _fx_groups_p2 if _couple_mode and track >= 5 else _fx_groups
@@ -771,6 +858,8 @@ func load_notes(judge_notes: Array) -> void:
 			"track": note.track,
 			"start_sec": note.start_sec,
 			"end_sec": note.end_sec,
+			"start_beat": note.start_beat,
+			"end_beat": note.end_beat,
 			"type": note.type,
 			"head": null, "neck": null, "body": null, "tail": null,
 			"done": false,
@@ -795,6 +884,8 @@ func load_hand_events(events: Array) -> void:
 			"player": clampi(int(event.get("player", 1)), 1, 2),
 			"start_sec": start_sec,
 			"end_sec": end_sec,
+			"start_beat": float(event.get("start_beat", NAN)),
+			"end_beat": float(event.get("end_beat", NAN)),
 			"type": str(event.get("type", "tap")).strip_edges().to_lower(),
 			"head": null, "neck": null, "body": null, "tail": null,
 			"effect_started": false, "active_effect": null,
@@ -815,6 +906,8 @@ func set_grayscale(on: bool) -> void:
 
 ## 判定回报表现反馈：按 (轨道, 开始秒) 找到渲染项，命中即隐藏/吸附
 func on_report(report: JudgeSystem.JudgeReport) -> void:
+	if report == null or not report.scoring:
+		return
 	var track := report.track
 	if track >= 0 and track < _receptor_flash.size():
 		if report.judge != "miss":
@@ -927,10 +1020,12 @@ func update_field(chart_time: float, delta: float) -> void:
 			continue
 		var start_sec: float = item["start_sec"]
 		var end_sec: float = item["end_sec"]
+		var start_beat := float(item.get("start_beat", NAN))
+		var end_beat := float(item.get("end_beat", NAN))
 		var idx: int = item["note_idx"]
 		var is_hold: bool = item["type"] == "hold"
-		var head_y := _scroll_y(start_sec, chart_time, speed)
-		var tail_y := _scroll_y(end_sec, chart_time, speed)
+		var head_y := _scroll_y_event(start_sec, start_beat, chart_time, speed)
+		var tail_y := _scroll_y_event(end_sec, end_beat, chart_time, speed)
 
 		# hold 命中后头部吸附判定线；结束即收起
 		if is_hold and _hold_active.has(idx):
@@ -1090,6 +1185,8 @@ func _update_hand_notes(chart_time: float, speed: float, scale: float,
 			continue
 		var start_sec := float(item.get("start_sec", 0.0))
 		var end_sec := float(item.get("end_sec", start_sec))
+		var start_beat := float(item.get("start_beat", NAN))
+		var end_beat := float(item.get("end_beat", NAN))
 		var is_hold := str(item.get("type", "tap")) == "hold" or end_sec > start_sec + 0.001
 		var direction := str(item.get("dir", "tt"))
 		var player := int(item.get("player", 1))
@@ -1097,8 +1194,8 @@ func _update_hand_notes(chart_time: float, speed: float, scale: float,
 		var lane_hint := clampi((player - 1) * 5 + 2, 0, maxi(0, track_count - 1))
 		var draw_x := target.x if is_hold else _visual_x(target.x, chart_time, start_sec, lane_hint)
 		var rotation := 0.0 if is_hold else _visual_rotation(chart_time, start_sec, lane_hint)
-		var head_y := _scroll_y(start_sec, chart_time, speed)
-		var tail_y := _scroll_y(end_sec, chart_time, speed)
+		var head_y := _scroll_y_event(start_sec, start_beat, chart_time, speed)
+		var tail_y := _scroll_y_event(end_sec, end_beat, chart_time, speed)
 
 		if not is_hold and chart_time >= start_sec - 0.001:
 			if not bool(item.get("effect_started", false)):
@@ -1195,7 +1292,9 @@ func _tiled_hold_texture(source: Texture2D, suffix: String, target_w: int, targe
 		return null
 	var quantized_h := maxi(HOLD_TILE_HEIGHT_STEP,
 		int(ceil(float(target_h) / float(HOLD_TILE_HEIGHT_STEP))) * HOLD_TILE_HEIGHT_STEP)
-	var key := "%s:%d:%d" % [suffix, target_w, quantized_h]
+	# suffix/尺寸相同并不代表纹理相同；运行中换皮肤时必须区分源 AtlasTexture，
+	# 否则 Hold 头尾已换新皮，身体仍会命中旧缓存。
+	var key := "%d:%s:%d:%d" % [source.get_instance_id(), suffix, target_w, quantized_h]
 	if _hold_tile_cache.has(key):
 		_hold_tile_cache_order.erase(key)
 		_hold_tile_cache_order.append(key)
@@ -1298,6 +1397,8 @@ func hand_effect_transform_for_test(dir: String) -> Dictionary:
 
 ## 手键装饰事件演出：dir=ll/tt/bb/rr，player 1/2；Hold 可循环到尾判。
 func spawn_hand_effect(dir: String, player: int, loop := false) -> FrameAnim:
+	if not _heavy_effects_enabled:
+		return null
 	var groups := _fx_groups_p2 if _couple_mode and player >= 2 else _fx_groups
 	var frames: Array = groups.get("hand", [])
 	if frames.is_empty():

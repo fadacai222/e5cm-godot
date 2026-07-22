@@ -525,6 +525,18 @@ static func _json_last_playable_beat(data: Dictionary, ticks_per_beat: int,
 	return float(last_line) / float(maxi(1, ticks_per_beat))
 
 
+static func json_bpm_metadata_from_data(data: Dictionary) -> Dictionary:
+	var patches := {}
+	var ticks_per_beat := _json_tick_per_beat(data)
+	var bpms := _normalize_json_bpms(data, ticks_per_beat, patches)
+	return {
+		"bpms": bpms,
+		"last_playable_beat": _json_last_playable_beat(data, ticks_per_beat, patches),
+		"ticks_per_beat": ticks_per_beat,
+		"compat_patches": _compat_patch_list(patches),
+	}
+
+
 static func _json_duration_bpms(bpms: Array, last_playable_beat: float,
 		patches: Dictionary) -> Array:
 	var result: Array = bpms.duplicate(true)

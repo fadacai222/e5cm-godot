@@ -3,38 +3,38 @@ extends SceneTree
 
 const REQUIRED_NODES := {
 	"login": [
-		"EditorPreview", "Stage1Guest", "Stage1Vip", "SwipeBackground", "VipCard",
+		"Stage1Guest", "Stage1Vip", "SwipeBackground", "VipCard",
 		"TopBar", "BottomCreditCenter",
 	],
 	"profile": [
-		"EditorPreview", "ProfileAvatar", "ProfileNickname", "FancyExpFrame",
+		"ProfileAvatar", "ProfileNickname", "FancyExpFrame",
 		"SpeedExpFrame", "LeaveButton", "TopBar", "BottomCreditCenter",
 	],
 	"mode_select": [
-		"EditorPreview", "ModeBanner", "DescriptionBar", "ModePrompt", "ModeButton0",
+		"ModeBanner", "DescriptionBar", "ModePrompt", "ModeButton0",
 		"ModeButton1", "ModeButton2", "ModeButton3", "ModeButton4", "TopBar",
 		"BottomCreditCenter",
 	],
 	"submode_select": [
-		"EditorPreview", "SubmodeLargeIcon", "SubmodeGrid", "PreviousPage", "NextPage",
+		"SubmodeLargeIcon", "SubmodeGrid", "PreviousPage", "NextPage",
 		"PageIndicator", "TopBar", "BottomCreditCenter",
 	],
 	"song_select": [
-		"EditorPreview", "SongGrid", "FavoriteButton", "SettingsButton", "FilterButton",
+		"SongGrid", "FavoriteButton", "SettingsButton", "FilterButton",
 		"AllButton", "PageLabel", "FilterLabel", "RoundLabel", "TopBar",
 		"BottomCreditCenter",
 	],
 	"loading": [
-		"EditorPreview", "Cover", "Stars", "SongName", "SongMeta", "PlayerSummary",
+		"Cover", "Stars", "SongName", "SongMeta", "PlayerSummary",
 		"LoadingLabel", "BottomCreditCenter",
 	],
 	"gameplay": [
-		"EditorPreview", "GameplayBackground", "NoteFieldRegion", "LegacyTopHud",
+		"GameplayBackground", "NoteFieldRegion", "LegacyTopHud",
 		"LegacyTopHud/Score", "LegacyTopHud/Percent", "LegacyTopHud/Combo",
 		"LegacyTopHud/SongTitle", "LegacyTopHud/Countdown", "LegacyTopHud/HpFill",
 	],
 	"settlement": [
-		"EditorPreview", "SettlementPanel", "CoverClip", "SongTitle", "Miss", "Good",
+		"SettlementPanel", "CoverClip", "SongTitle", "Miss", "Good",
 		"Cool", "Perfect", "Combo", "Accuracy", "Score", "GradeSprite",
 		"BottomCreditCenter",
 	],
@@ -62,9 +62,7 @@ func _initialize() -> void:
 		for node_path in REQUIRED_NODES[scene_name]:
 			_check(instance.get_node_or_null(node_path) != null,
 				"%s/%s 已保存为编辑器节点" % [scene_name, node_path])
-		var preview := instance.get_node_or_null("EditorPreview") as TextureRect
-		_check(preview != null and preview.texture != null,
-			"%s 提供编辑器画面预览" % scene_name)
+		# 运行时动态创建的装饰节点不伪装成编辑器截图；这里只验证可交互主骨架已保存。
 		instance.free()
 
 	if _failures == 0:

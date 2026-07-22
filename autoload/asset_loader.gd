@@ -41,13 +41,13 @@ func _select_runtime_root() -> void:
 	# 核心资源是否可用只检查小体积 UI/音效，不再用 51GB 曲库作为探针。
 	_runtime_root = RUNTIME_ROOT
 	_using_recovery_root = false
-	if FileAccess.file_exists(RUNTIME_ROOT.path_join("song_index.json")) \
-			and DirAccess.open(RUNTIME_ROOT.path_join("UI-img")) != null:
+	# 正式发行包故意不再携带开发机完整 song_index.json；核心资源完整性只看 UI 目录。
+	# 发行曲库索引由 EXE 同目录的 release-song-index.json 提供。
+	if DirAccess.open(RUNTIME_ROOT.path_join("UI-img")) != null:
 		return
 	var project_dir := ProjectSettings.globalize_path("res://").trim_suffix("/").trim_suffix("\\")
 	var recovery_root := project_dir.get_base_dir().path_join(RECOVERY_DIR_NAME).replace("\\", "/")
-	if FileAccess.file_exists(recovery_root.path_join("song_index.json")) \
-			and DirAccess.open(recovery_root.path_join("UI-img")) != null:
+	if DirAccess.open(recovery_root.path_join("UI-img")) != null:
 		_runtime_root = recovery_root
 		_using_recovery_root = true
 		push_warning("AssetLoader: 项目内核心资源不完整，临时使用恢复目录：%s" % recovery_root)
@@ -368,12 +368,38 @@ func key_atlas(skin := "") -> Dictionary:
 	return atlas(_skin_dir("key", skin))
 
 
+func _add_text_pf_aliases(source: Dictionary, canonical_prefix: String,
+		values: Array[String]) -> Dictionary:
+	# 历史皮肤使用 text_pf2/text_pf5/text_pf7/text_pf8 等不同编号。
+	# 调用方只认语义键，加载层统一补成 judge_* / number_*，避免逐皮肤写白名单。
+	var keys := source.keys()
+	keys.sort()
+	for value in values:
+		var canonical := "%s_%s" % [canonical_prefix, value]
+		if source.get(canonical) is Texture2D:
+			continue
+		var suffix := "_%s" % value
+		for raw_key in keys:
+			var base_name := str(raw_key).get_basename()
+			if not base_name.begins_with("text_pf") or not base_name.ends_with(suffix):
+				continue
+			var texture := source.get(raw_key) as Texture2D
+			if texture == null:
+				continue
+			source[canonical] = texture
+			source[canonical + ".png"] = texture
+			break
+	return source
+
+
 func judge_atlas(skin := "") -> Dictionary:
-	return atlas(_skin_dir("judge", skin))
+	return _add_text_pf_aliases(atlas(_skin_dir("judge", skin)), "judge",
+		["combo", "cool", "good", "miss", "perfect"])
 
 
 func number_atlas(skin := "") -> Dictionary:
-	return atlas(_skin_dir("number", skin))
+	return _add_text_pf_aliases(atlas(_skin_dir("number", skin)), "number",
+		["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "x"])
 
 
 func key_effect_atlas(skin := "") -> Dictionary:

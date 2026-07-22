@@ -127,15 +127,15 @@ func _initialize() -> void:
 
 	ready.call("seek_for_test", 7.65)
 	gameplay.call("_update_ready_reveal")
-	_check(background_dim.color.a > 0.45 and background_dim.color.a < 0.70,
-		"右退期间黑幕平滑交还给正式背景亮度", str(background_dim.color.a))
+	_check(background_dim.color.a > 0.0 and background_dim.color.a < 0.70,
+		"右退期间黑幕平滑交还给 100% 正式背景亮度", str(background_dim.color.a))
 
 	ready.call("seek_for_test", 8.15)
 	gameplay.call("_update_ready_reveal")
-	_check(absf(background_dim.color.a - 0.45) <= 0.01
+	_check(absf(background_dim.color.a) <= 0.001
 		and hud.position.y == 0.0 and hud.modulate == Color.WHITE
 		and note_field.modulate == Color.WHITE,
-		"右退完成后恢复正式游戏亮度和完整 UI")
+		"右退完成后恢复 100% 无蒙版背景和完整 UI")
 
 	root.remove_child(gameplay)
 	gameplay.free()

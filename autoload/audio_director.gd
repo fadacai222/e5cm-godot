@@ -4,6 +4,8 @@ extends Node
 ## 子模式 -> 选歌 BGM 映射（旧 场景_子模式.py::子模式对应选歌BGM）：
 ##   表演/DIY -> show.mp3、疯狂 -> devil.mp3、混音 -> remix.mp3、club -> club.mp3、其他 -> UI音乐
 
+signal audio_settings_changed
+
 var _bgm_player: AudioStreamPlayer
 var _sfx_players: Array[AudioStreamPlayer] = []
 var _current_bgm_path := ""
@@ -24,17 +26,36 @@ func _ready() -> void:
 	_apply_volume()
 
 
+func music_volume_linear() -> float:
+	if SettingsStore.muted:
+		return 0.0
+	return clampf(float(SettingsStore.bgm_volume) / 100.0, 0.0, 1.0)
+
+
+func music_volume_db() -> float:
+	return linear_to_db(maxf(0.0001, music_volume_linear()))
+
+
+func apply_music_volume(player: AudioStreamPlayer) -> void:
+	if player == null or not is_instance_valid(player):
+		return
+	player.volume_db = music_volume_db()
+
+
 func _apply_volume() -> void:
-	var vol := 0.0 if SettingsStore.muted else float(SettingsStore.bgm_volume) / 100.0
-	_bgm_player.volume_db = linear_to_db(maxf(0.0001, vol))
+	apply_music_volume(_bgm_player)
 	var sfx_vol := 0.0 if SettingsStore.muted else 0.9
 	for p in _sfx_players:
 		p.volume_db = linear_to_db(maxf(0.0001, sfx_vol))
+	var master_bus := AudioServer.get_bus_index("Master")
+	if master_bus >= 0:
+		AudioServer.set_bus_mute(master_bus, SettingsStore.muted)
 
 
-## 设置变更后由设置菜单调用
+## 设置变更后由设置菜单调用；独立歌曲/预览播放器通过信号同步。
 func refresh_volume() -> void:
 	_apply_volume()
+	audio_settings_changed.emit()
 
 
 var _hit_tick_stream: AudioStreamWAV

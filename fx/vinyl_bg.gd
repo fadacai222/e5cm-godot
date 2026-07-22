@@ -49,11 +49,15 @@ var _center_bar_left: TextureRect
 var _center_bar_right: TextureRect
 var _side_left: Array[TextureRect] = []
 var _side_right: Array[TextureRect] = []
+var _gpu_particles: GPUParticles2D
+var _gpu_particle_material: ParticleProcessMaterial
+var _particles_enabled := true
 
 
 func setup(cover_path: String) -> void:
 	cover_tex = AssetLoader.tex(cover_path)
 	_build_background()
+	_build_gpu_particles()
 	_build_side_lines()
 	_build_rig()
 	_build_astronauts()
@@ -74,6 +78,79 @@ func _build_background() -> void:
 	_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_background.z_index = -30
 	add_child(_background)
+
+
+func _build_gpu_particles() -> void:
+	_gpu_particles = GPUParticles2D.new()
+	_gpu_particles.name = "VinylGpuParticles"
+	_gpu_particles.z_index = 0
+	_gpu_particles.amount = int(PARTICLE_TARGETS[0])
+	_gpu_particles.lifetime = float(PARTICLE_LIFE_MAX[0])
+	_gpu_particles.randomness = 0.55
+	_gpu_particles.preprocess = float(PARTICLE_LIFE_MAX[0])
+	_gpu_particles.fixed_fps = 60
+	_gpu_particles.interpolate = true
+	_gpu_particles.visibility_rect = Rect2(-2200, -1400, 4400, 2800)
+	_gpu_particles.texture = _make_particle_texture()
+	var additive := CanvasItemMaterial.new()
+	additive.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
+	_gpu_particles.material = additive
+
+	_gpu_particle_material = ParticleProcessMaterial.new()
+	_gpu_particle_material.emission_shape = ParticleProcessMaterial.EMISSION_SHAPE_SPHERE
+	_gpu_particle_material.emission_sphere_radius = 8.0
+	_gpu_particle_material.direction = Vector3(1.0, 0.0, 0.0)
+	_gpu_particle_material.spread = 180.0
+	_gpu_particle_material.gravity = Vector3.ZERO
+	_gpu_particle_material.scale_min = 0.20
+	_gpu_particle_material.scale_max = 0.72
+	var gradient := Gradient.new()
+	gradient.offsets = PackedFloat32Array([0.0, 0.40, 0.78, 1.0])
+	gradient.colors = PackedColorArray([
+		Color(0.48, 0.92, 1.0, 0.0),
+		Color(0.48, 0.92, 1.0, 0.95),
+		Color(1.0, 0.36, 0.74, 0.78),
+		Color(1.0, 0.36, 0.74, 0.0),
+	])
+	var ramp := GradientTexture1D.new()
+	ramp.gradient = gradient
+	_gpu_particle_material.color_ramp = ramp
+	_gpu_particles.process_material = _gpu_particle_material
+	add_child(_gpu_particles)
+	_update_gpu_particle_profile()
+	_apply_particle_runtime_state()
+
+
+func _make_particle_texture() -> Texture2D:
+	const SIZE := 24
+	var image := Image.create(SIZE, SIZE, false, Image.FORMAT_RGBA8)
+	var center := Vector2(SIZE - 1, SIZE - 1) * 0.5
+	var radius := float(SIZE) * 0.5
+	for y in SIZE:
+		for x in SIZE:
+			var distance := Vector2(x, y).distance_to(center) / radius
+			var alpha := pow(clampf(1.0 - distance, 0.0, 1.0), 1.75)
+			image.set_pixel(x, y, Color(1.0, 1.0, 1.0, alpha))
+	return ImageTexture.create_from_image(image)
+
+
+func _update_gpu_particle_profile() -> void:
+	if _gpu_particles == null or _gpu_particle_material == null:
+		return
+	var index := clampi(_state - 1, 0, 3)
+	_gpu_particles.amount = int(PARTICLE_TARGETS[index])
+	_gpu_particles.lifetime = float(PARTICLE_LIFE_MAX[index])
+	_gpu_particles.preprocess = minf(_gpu_particles.lifetime, 4.1)
+	_gpu_particle_material.initial_velocity_min = float(PARTICLE_SPEED_MIN[index])
+	_gpu_particle_material.initial_velocity_max = float(PARTICLE_SPEED_MAX[index])
+	_gpu_particle_material.radial_accel_min = 24.0
+	_gpu_particle_material.radial_accel_max = float(PARTICLE_ACCEL_MAX[index])
+	_gpu_particle_material.scale_min = lerpf(0.18, 0.24, float(index) / 3.0)
+	_gpu_particle_material.scale_max = lerpf(0.62, 0.82, float(index) / 3.0)
+
+
+func particle_backend_for_test() -> String:
+	return "gpu" if _gpu_particles != null else "missing"
 
 
 func _build_side_lines() -> void:
@@ -169,6 +246,7 @@ func on_combo(combo: int) -> void:
 		_state = next_state
 		_state_transition = 0.0
 		_pulse = 1.0
+		_update_gpu_particle_profile()
 	_combo = next_combo
 
 
@@ -200,8 +278,27 @@ func particle_profile_for_test(state: int) -> Dictionary:
 	}
 
 
+func set_particles_enabled(value: bool) -> void:
+	_particles_enabled = value
+	_apply_particle_runtime_state()
+
+
+func particles_enabled_for_test() -> bool:
+	return _particles_enabled and _gpu_particles != null \
+		and _gpu_particles.visible and _gpu_particles.emitting
+
+
+func _apply_particle_runtime_state() -> void:
+	if _gpu_particles == null:
+		return
+	_gpu_particles.visible = _particles_enabled
+	_gpu_particles.emitting = _particles_enabled
+	_gpu_particles.speed_scale = 0.0 if paused or not _particles_enabled else 1.0
+
+
 func set_paused(value: bool) -> void:
 	paused = value
+	_apply_particle_runtime_state()
 
 
 func seek_for_test(seconds: float) -> void:
@@ -306,34 +403,5 @@ func _draw() -> void:
 		draw_circle(Vector2(-940, -520), radius, Color(1.0, 0.08, 0.08, alpha))
 		draw_circle(Vector2(940, 520), radius, Color(1.0, 0.08, 0.08, alpha))
 
-	var state_index := clampi(_state - 1, 0, 3)
-	var target_count: int = int(PARTICLE_TARGETS[state_index])
-	var speed_min: float = float(PARTICLE_SPEED_MIN[state_index])
-	var speed_max: float = float(PARTICLE_SPEED_MAX[state_index])
-	var life_min: float = float(PARTICLE_LIFE_MIN[state_index])
-	var life_max: float = float(PARTICLE_LIFE_MAX[state_index])
-	var accel_max: float = float(PARTICLE_ACCEL_MAX[state_index])
-	for i in target_count:
-		var fi := float(i)
-		var seed := fposmod(fi * 0.61803398875 + sin(fi * 1.73) * 0.17, 1.0)
-		var angle := fposmod(fi * 2.399963 + sin(fi * 0.17) * 0.21, TAU)
-		var speed := lerpf(speed_min, speed_max, seed)
-		var life := lerpf(life_min, life_max, fposmod(fi * 0.371, 1.0))
-		var age := fposmod(_time + fi * 0.043, life)
-		var acceleration := lerpf(24.0, accel_max, fposmod(fi * 0.713, 1.0))
-		var distance := speed * age + 0.5 * acceleration * age * age
-		var direction := Vector2(cos(angle), sin(angle))
-		# 轻微切向偏移让扩散像高速旋转甩出的星屑，而不是僵硬的放射圆。
-		var tangent := Vector2(-direction.y, direction.x)
-		var point := direction * distance + tangent * sin(age * 4.7 + fi) * (5.0 + age * 6.0)
-		var progress := age / life
-		var spawn_alpha := smoothstep(0.0, 0.08, progress)
-		var alpha := clampf(spawn_alpha * (1.0 - progress) \
-			* (0.78 + sin(age * 13.0 + fi) * 0.16), 0.0, 1.0)
-		var size := lerpf(PARTICLE_CORE_MIN, PARTICLE_CORE_MAX,
-			fposmod(fi * 0.237, 1.0)) + progress * 0.42
-		var color_mix := 0.5 + 0.5 * sin(fi * 0.91 + _time * 0.7)
-		var particle_color := Color(0.48, 0.92, 1.0).lerp(Color(1.0, 0.36, 0.74), color_mix)
-		draw_circle(point, size + 1.4 + progress * 0.7,
-			Color(particle_color.r, particle_color.g, particle_color.b, alpha * 0.14))
-		draw_circle(point, size, Color(particle_color.r, particle_color.g, particle_color.b, alpha))
+	# 星屑已迁移到单个 GPUParticles2D。旧实现满档每帧提交 648 个 draw_circle，
+	# 会把 Canvas 主线程压到 40~50 FPS；这里仅保留 6 个大范围角落光焰。

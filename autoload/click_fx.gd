@@ -8,6 +8,16 @@ var _frames: Array = []
 func _ready() -> void:
 	layer = 90
 	_frames = FrameAnim.from_dir(AssetLoader.abs_path("UI-img/点击特效"))
+	if not SettingsStore.performance_changed.is_connected(_on_performance_changed):
+		SettingsStore.performance_changed.connect(_on_performance_changed)
+
+
+func _on_performance_changed(enabled: bool) -> void:
+	if not enabled:
+		return
+	for child in get_children():
+		if child is FrameAnim:
+			child.queue_free()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -27,7 +37,7 @@ var _last_spawn_ms := 0
 
 
 func _spawn(pos: Vector2) -> void:
-	if _frames.is_empty():
+	if SettingsStore.performance_mode or _frames.is_empty():
 		return
 	var now := Time.get_ticks_msec()
 	if now - _last_spawn_ms < 30:   # _input 与 _unhandled_input 双触发去重

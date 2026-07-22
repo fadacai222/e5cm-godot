@@ -236,7 +236,20 @@ mouse_filter = 2
 expand_mode = 1
 stretch_mode = 5
 
+[node name="Phase3Blackout" type="ColorRect" parent="."]
+visible = false
+z_index = 70
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0, 0, 0, 1)
+
 [node name="Phase3Prompt" type="TextureRect" parent="."]
+z_index = 71
 layout_mode = 0
 offset_left = 376.8
 offset_top = 368.4
@@ -248,6 +261,7 @@ stretch_mode = 5
 
 [node name="Phase3Countdown" type="Label" parent="."]
 visible = false
+z_index = 71
 layout_mode = 1
 anchors_preset = 10
 anchor_right = 1.0
@@ -258,6 +272,7 @@ text = ""
 horizontal_alignment = 1
 
 [node name="Phase3CountdownDigits" type="Control" parent="."]
+z_index = 71
 layout_mode = 0
 offset_left = 760.0
 offset_top = 810.0
@@ -267,6 +282,7 @@ mouse_filter = 2
 visible = false
 
 [node name="Phase3Yes" type="TextureButton" parent="."]
+z_index = 72
 layout_mode = 0
 offset_left = 840.0
 offset_top = 594.0
@@ -276,6 +292,7 @@ ignore_texture_size = true
 stretch_mode = 4
 
 [node name="Phase3No" type="TextureButton" parent="."]
+z_index = 72
 layout_mode = 0
 offset_left = 972.0
 offset_top = 594.0

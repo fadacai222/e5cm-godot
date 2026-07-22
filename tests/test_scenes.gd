@@ -1,5 +1,5 @@
 extends SceneTree
-## 全场景冒烟测试：手动装配 autoload，逐个实例化 9 个场景，抓脚本运行错误。
+## 全场景冒烟测试：手动装配 autoload，逐个实例化核心场景，抓脚本运行错误。
 ## 运行：godot --headless --path . --script res://tests/test_scenes.gd
 ## 判定标准：输出中不出现 SCRIPT ERROR 即通过（由外层 grep 检查）。
 
@@ -8,6 +8,8 @@ const AUTOLOADS := [
 	["SharedVideoBackground", "res://autoload/shared_video_background.gd"],
 	["SettingsStore", "res://autoload/settings_store.gd"],
 	["GameState", "res://autoload/game_state.gd"],
+	["TrainingSession", "res://autoload/training_session.gd"],
+	["AnalyticsStore", "res://autoload/analytics_store.gd"],
 	["ProfileStore", "res://autoload/profile_store.gd"],
 	["SongLibrary", "res://autoload/song_library.gd"],
 	["AudioDirector", "res://autoload/audio_director.gd"],
@@ -22,6 +24,7 @@ const SCENES := [
 	"res://scenes/mode_select/mode_select.tscn",
 	"res://scenes/submode_select/submode_select.tscn",
 	"res://scenes/song_select/song_select.tscn",
+	"res://scenes/training_setup/training_setup.tscn",
 	"res://scenes/loading/loading.tscn",
 	"res://scenes/gameplay/gameplay.tscn",
 	"res://scenes/settlement/settlement.tscn",
@@ -62,6 +65,8 @@ func _initialize() -> void:
 		# 准备载荷
 		if key == "loading" or key == "gameplay":
 			router.payload = song_payload.duplicate()
+		elif key == "training_setup":
+			router.payload = {"song": song_payload.duplicate()}
 		elif key == "settlement":
 			router.payload = {
 				"曲目名": "测试曲", "sm_key": str(song_payload.get("sm_key", "")),

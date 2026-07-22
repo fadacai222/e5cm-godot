@@ -106,7 +106,10 @@ func _initialize() -> void:
 	_check(export_config.contains("songs/**") \
 		and export_config.contains("assets/e5cm_runtime/songs/**"),
 		"导出配置明确排除项目根目录及旧位置的 51GB 曲库")
-	_check(export_config.contains("parity/resource_migration/**") \
+	_check(export_config.contains("assets/e5cm_runtime/song_index.json"),
+		"发行 PCK 不携带开发机完整曲库索引")
+	_check((export_config.contains("parity/**") \
+			or export_config.contains("parity/resource_migration/**")) \
 		and export_config.contains("tests/**") and export_config.contains("tools/**"),
 		"导出配置排除迁移证据与开发测试文件")
 

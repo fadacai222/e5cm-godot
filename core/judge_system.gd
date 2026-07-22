@@ -11,17 +11,22 @@ class JudgeNote:
 	var start_sec: float
 	var end_sec: float
 	var tick_secs: Array = []   # hold 用：每个整拍的判定时刻（秒）
+	var start_beat := NAN      # 仅供视觉变速使用，不参与判定
+	var end_beat := NAN
 
-	func _init(p_track: int, p_type: String, p_start: float, p_end: float, p_ticks: Array = []) -> void:
+	func _init(p_track: int, p_type: String, p_start: float, p_end: float,
+			p_ticks: Array = [], p_start_beat := NAN, p_end_beat := NAN) -> void:
 		track = p_track
 		type = p_type
 		start_sec = p_start
 		end_sec = p_end
 		tick_secs = p_ticks.duplicate()
+		start_beat = float(p_start_beat)
+		end_beat = float(p_end_beat)
 
 
 class JudgeReport:
-	var type: String            # "tap" / "hold_head" / "hold_tick"
+	var type: String            # "tap" / "hold_head" / "hold_tick" / "hold_end"
 	var track: int
 	var judge: String           # "perfect" / "cool" / "good" / "miss"
 	var time_diff_ms: float
@@ -29,9 +34,12 @@ class JudgeReport:
 	var combo_add: int          # tap/hold_head=1; hold_tick=4; miss=0
 	var start_sec: float
 	var end_sec: float
+	var note_index: int
+	var scoring: bool
 
 	func _init(p_type: String, p_track: int, p_judge: String, p_diff: float,
-			p_score: int, p_combo: int, p_start: float = 0.0, p_end: float = 0.0) -> void:
+			p_score: int, p_combo: int, p_start: float = 0.0, p_end: float = 0.0,
+			p_note_index: int = -1, p_scoring := true) -> void:
 		type = p_type
 		track = p_track
 		judge = p_judge
@@ -40,6 +48,36 @@ class JudgeReport:
 		combo_add = p_combo
 		start_sec = p_start
 		end_sec = p_end
+		note_index = p_note_index
+		scoring = bool(p_scoring)
+
+
+static func report_to_dict(report: JudgeReport) -> Dictionary:
+	if report == null:
+		return {}
+	return {
+		"type": report.type,
+		"track": report.track,
+		"judge": report.judge,
+		"time_diff_ms": report.time_diff_ms,
+		"score_add": report.score_add,
+		"combo_add": report.combo_add,
+		"start_sec": report.start_sec,
+		"end_sec": report.end_sec,
+		"note_index": report.note_index,
+		"scoring": report.scoring,
+	}
+
+
+static func report_from_dict(data: Dictionary) -> JudgeReport:
+	if data.is_empty():
+		return null
+	return JudgeReport.new(
+		str(data.get("type", "tap")), int(data.get("track", 0)),
+		str(data.get("judge", "miss")), float(data.get("time_diff_ms", 0.0)),
+		int(data.get("score_add", 0)), int(data.get("combo_add", 0)),
+		float(data.get("start_sec", 0.0)), float(data.get("end_sec", 0.0)),
+		int(data.get("note_index", -1)), bool(data.get("scoring", true)))
 
 
 # ---- 判定参数（旧版 判定参数 dataclass）----
@@ -156,7 +194,7 @@ func update(chart_sec: float, is_track_pressed: Callable) -> Array:
 				_finished[idx] = true
 				reports.append(JudgeReport.new(
 					"tap" if note.type == "tap" else "hold_head",
-					note.track, "miss", diff_ms, 0, 0, note.start_sec, note.end_sec))
+					note.track, "miss", diff_ms, 0, 0, note.start_sec, note.end_sec, idx))
 				cursor += 1
 				continue
 			break
@@ -190,16 +228,20 @@ func update(chart_sec: float, is_track_pressed: Callable) -> Array:
 				reports.append(JudgeReport.new(
 					"hold_tick", note.track, tick_judge, 0.0,
 					_score_for(tick_judge), hold_combo_per_tick,
-					note.start_sec, note.end_sec))
+					note.start_sec, note.end_sec, idx))
 			else:
 				reports.append(JudgeReport.new(
 					"hold_tick", note.track, "miss", 0.0, 0, 0,
-					note.start_sec, note.end_sec))
+					note.start_sec, note.end_sec, idx))
 			tick_cursor += 1
 		_hold_tick_cursor[idx] = tick_cursor
 
-		# tick 都算完，并且超过结束秒一定时间，认为结束
+		# tick 都算完，并且超过结束秒一定时间，认为结束。
+		# hold_end 仅描述生命周期，不参与分数、Combo、血量或判定统计。
 		if tick_cursor >= ticks.size() and chart_sec > note.end_sec + 0.05:
+			var end_judge := str(_hold_head_judge.get(idx, "perfect"))
+			reports.append(JudgeReport.new("hold_end", note.track, end_judge, 0.0,
+				0, 0, note.start_sec, note.end_sec, idx, false))
 			_finished[idx] = true
 			_hold_head_judge.erase(idx)
 			_hold_last_pressed.erase(idx)
@@ -220,11 +262,11 @@ func _settle_head(candidate: int, chart_sec: float, track: int) -> Array:
 		_head_judged[candidate] = true
 		_finished[candidate] = true
 		return [JudgeReport.new("tap", track, judge, diff_ms, score,
-				0 if judge == "miss" else 1, note.start_sec, note.end_sec)]
+				0 if judge == "miss" else 1, note.start_sec, note.end_sec, candidate)]
 
 	_head_judged[candidate] = true
 	var reports: Array = [JudgeReport.new("hold_head", track, judge, diff_ms, score,
-			0 if judge == "miss" else 1, note.start_sec, note.end_sec)]
+			0 if judge == "miss" else 1, note.start_sec, note.end_sec, candidate)]
 
 	if judge == "miss":
 		_finished[candidate] = true
@@ -290,10 +332,10 @@ func _auto_update(chart_sec: float) -> Array:
 				if note.type == "tap":
 					_finished[idx] = true
 					reports.append(JudgeReport.new("tap", note.track, "perfect", 0.0,
-							5000, 1, note.start_sec, note.end_sec))
+							5000, 1, note.start_sec, note.end_sec, idx))
 				else:
 					reports.append(JudgeReport.new("hold_head", note.track, "perfect", 0.0,
-							5000, 1, note.start_sec, note.end_sec))
+							5000, 1, note.start_sec, note.end_sec, idx))
 					if not _hold_tick_cursor.has(idx):
 						_hold_tick_cursor[idx] = 0
 					if not _active_holds.has(idx):
@@ -314,10 +356,12 @@ func _auto_update(chart_sec: float) -> Array:
 		var ticks: Array = note.tick_secs
 		while tick_cursor < ticks.size() and float(ticks[tick_cursor]) <= chart_sec:
 			reports.append(JudgeReport.new("hold_tick", note.track, "perfect", 0.0,
-					5000, hold_combo_per_tick, note.start_sec, note.end_sec))
+					5000, hold_combo_per_tick, note.start_sec, note.end_sec, idx))
 			tick_cursor += 1
 		_hold_tick_cursor[idx] = tick_cursor
 		if tick_cursor >= ticks.size() and chart_sec > note.end_sec + 0.05:
+			reports.append(JudgeReport.new("hold_end", note.track, "perfect", 0.0,
+				0, 0, note.start_sec, note.end_sec, idx, false))
 			_finished[idx] = true
 			_hold_head_judge.erase(idx)
 			_hold_last_pressed.erase(idx)

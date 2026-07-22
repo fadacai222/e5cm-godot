@@ -97,8 +97,8 @@ func _initialize() -> void:
 	root.add_child(submode)
 	await process_frame
 	_check(int(submode.get("_selected")) == -1, "子模式入场不自动选中", str(submode.get("_selected")))
-	_check(submode.get("ENTRY_DURATION") != null and float(submode.get("ENTRY_DURATION")) >= 1.19,
-		"子模式保留原版 1200ms 入场动效")
+	_check(submode.get("ENTRY_DURATION") != null and float(submode.get("ENTRY_DURATION")) <= 0.36,
+		"子模式入场压缩到 360ms 内，避免场景看起来卡住")
 	var submode_constants := (submode.get_script() as Script).get_script_constant_map()
 	_check(int(submode_constants.get("PAGE_SIZE", 0)) == 18, "子模式每页容量与原版 6×3 一致",
 		str(submode_constants.get("PAGE_SIZE", null)))
@@ -247,8 +247,9 @@ func _initialize() -> void:
 	_check(exp_panel != null
 		and exp_panel.get_node_or_null("RewardWindow/StyleExperienceBarFrame") != null
 		and exp_panel.get_node_or_null("RewardWindow/SpeedExperienceBarFrame") != null
+		and exp_panel.get_node_or_null("RewardWindow/DiyExperienceBarFrame") != null
 		and exp_panel.get_node_or_null("RewardWindow/ExpDigits") != null,
-		"经验阶段包含花式/竞速贴图经验条与经验数字图集")
+		"经验阶段同时包含花式、竞速、DIY 三条经验进度与经验数字图集")
 	settlement.free()
 
 	# SceneTree.quit() 前先释放音频后端引用并等混音线程回收 playback，

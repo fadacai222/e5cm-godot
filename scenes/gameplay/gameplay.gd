@@ -9,10 +9,15 @@ const HP_OVERDRIVE_BASE_X := 345.0
 const HP_OVERDRIVE_PARTICLE_DELAY_SEC := 5.0
 const STAGE_GROUP_OFFSET_X := -105.0
 const STAGE_BOARD_ROTATION_DEG := 36.0
-const ACHIEVEMENT_TIMEOUT_SEC := 4.6
+# 原版六阶段总时长约 5.1667 秒；额外保留素材/低帧率故障余量。
+const ACHIEVEMENT_TIMEOUT_SEC := 6.0
 const ROUTER_BUSY_TIMEOUT_SEC := 1.5
 const AUDIO_EVENT_GRACE_SEC := 0.35
 const MIN_VALID_AUDIO_DURATION_SEC := 0.5
+const RewardResolverScript := preload("res://ui/reward_appearance_resolver.gd")
+const RewardAvatarFrameScript := preload("res://ui/reward_avatar_frame.gd")
+const RewardTitleBadgeScript := preload("res://ui/reward_title_badge.gd")
+const StageAwakeningFxScript := preload("res://fx/stage_awakening_fx.gd")
 
 var payload := {}
 
@@ -62,6 +67,7 @@ var vip_icon: TextureRect
 var vip_particles: TextureRect
 var stage_spectrum: SpectrumRing
 var combo_milestone_fx: ComboMilestoneFx
+var stage_awakening_fx
 var shortcut_hint: Label
 var combo_group: Control
 var combo_digits: Control
@@ -73,7 +79,9 @@ var combo_judges: Array[TextureRect] = []
 var combo_words: Array[TextureRect] = []
 var combo_prefixes: Array[String] = []
 var _avatar_fx_frames: Array = []
+var _avatar_frame_index := -1
 var _vip_particle_frames: Array = []
+var _vip_particle_frame_index := -1
 var _combo_number_atlas := {}
 var _combo_judge_atlas := {}
 var _combo_last_value := -1
@@ -81,6 +89,8 @@ var _last_combo_milestone := 0
 var _combo_anim_t := 0.0
 var _hud_base_position := Vector2.ZERO
 var _stage_song_scroll := 0.0
+var _reward_avatar_frame: RewardAvatarFrame
+var _reward_title_badge: RewardTitleBadge
 
 var _ended := false
 var _finish_wait := 0.0
@@ -90,7 +100,22 @@ var _settlement_transition_started := false
 var _chart_ready := false
 var _load_error := ""
 var _loaded_audio_path := ""
+var _resolved_image_background_path := ""
 var _achievement_sfx_played := {}
+
+# 训练室：训练载荷永远绕开正式结算、经验和歌曲记录。
+var _training_mode := false
+var _training_runtime: TrainingRuntime
+var _training_rewind_pending := false
+var _run_analytics: JudgementAnalytics
+var _analysis_chart_key := ""
+var _analysis_eligible := false
+var _training_info_label: Label
+var _training_stats_label: Label
+var _training_timing_label: Label
+var _training_pause_button: Button
+var _training_prev_button: Button
+var _training_next_button: Button
 
 
 func _ready() -> void:
@@ -104,12 +129,92 @@ func _ready() -> void:
 				"submode": "club", "sm_key": s["sm_key"],
 				"prefer_double": true, "couple": false}
 
+	_configure_training_payload()
 	_resolve_payload_paths()
 	_build_ui()
 	if await _load_chart():
 		_start()
 	else:
 		_show_load_error(_load_error)
+
+
+func _configure_training_payload() -> void:
+	_training_mode = TrainingSession.is_training_payload(payload)
+	if _training_mode:
+		_training_runtime = TrainingRuntime.new(payload)
+
+
+func _build_training_hud() -> void:
+	var training_hud := UiKit.hud_frame(self, Rect2(22, 680, 560, 300), "TrainingHud",
+		E5OriginalTheme.CYAN, E5OriginalTheme.MAGENTA, 48.0, true, 16.0)
+	training_hud.z_index = 320
+	var title := UiKit.label(self, "训练室 / PRACTICE", 23, Vector2(48, 739),
+		Color(0.3, 0.95, 1.0), 2)
+	title.z_index = 321
+	_training_info_label = UiKit.label(self, "", 19, Vector2(48, 792), Color.WHITE, 2)
+	_training_info_label.size = Vector2(405, 52)
+	_training_info_label.z_index = 321
+	_training_stats_label = UiKit.label(self, "P 0  C 0  G 0  M 0", 18,
+		Vector2(48, 846), Color(0.88, 0.92, 1.0), 2)
+	_training_stats_label.size = Vector2(405, 40)
+	_training_stats_label.z_index = 321
+	_training_timing_label = UiKit.label(self, "等待判定", 20,
+		Vector2(48, 892), Color(1.0, 0.82, 0.28), 2)
+	_training_timing_label.size = Vector2(505, 36)
+	_training_timing_label.z_index = 321
+	_training_pause_button = _training_hud_button("暂停", Vector2(48, 934), Vector2(108, 42), _toggle_space_pause)
+	var restart_button := _training_hud_button("重来", Vector2(164, 934), Vector2(108, 42), _on_restart)
+	restart_button.name = "TrainingRestartButton"
+	_training_prev_button = _training_hud_button("上一段", Vector2(280, 934), Vector2(126, 42),
+		func(): _switch_training_problem_window(-1))
+	_training_next_button = _training_hud_button("下一段", Vector2(414, 934), Vector2(126, 42),
+		func(): _switch_training_problem_window(1))
+	_training_prev_button.disabled = not _training_runtime.has_problem_windows()
+	_training_next_button.disabled = not _training_runtime.has_problem_windows()
+	_refresh_training_hud()
+
+
+func _training_hud_button(text_value: String, pos: Vector2, target_size: Vector2,
+		callback: Callable) -> Button:
+	var button := Button.new()
+	button.text = text_value
+	button.position = pos
+	button.size = target_size
+	button.z_index = 322
+	button.pressed.connect(callback)
+	UiKit.skin_arcade_button(button, false, false, 17)
+	add_child(button)
+	return button
+
+
+func _refresh_training_hud(last_diff_ms: Variant = null) -> void:
+	if not _training_mode or _training_info_label == null:
+		return
+	var loop_text := "∞" if _training_runtime.loop_target < 0 else "%d/%d" % [
+		_training_runtime.loop_index, _training_runtime.loop_target]
+	_training_info_label.text = "%s - %s   %d%%   循环 %s" % [
+		_format_training_time(_training_runtime.runtime_start_sec),
+		_format_training_time(_training_runtime.end_sec),
+		roundi(_training_runtime.speed * 100.0), loop_text]
+	var summary := _training_runtime.live_summary()
+	_training_stats_label.text = "P %d  C %d  G %d  M %d   平均 %+.1fms" % [
+		int(summary.get("perfect", 0)), int(summary.get("cool", 0)),
+		int(summary.get("good", 0)), int(summary.get("miss", 0)),
+		float(summary.get("average_diff_ms", 0.0))]
+	_training_timing_label.visible = _training_runtime.show_timing
+	if _training_pause_button != null:
+		_training_pause_button.text = "继续" if conductor != null and conductor.is_paused() else "暂停"
+	if last_diff_ms != null and _training_runtime.show_timing:
+		var diff := float(last_diff_ms)
+		if absf(diff) < 0.5:
+			_training_timing_label.text = "±0ms"
+		else:
+			_training_timing_label.text = "%s  %+.1fms" % ["EARLY" if diff > 0.0 else "LATE", diff]
+
+
+static func _format_training_time(seconds: float) -> String:
+	var total := maxi(0, int(roundf(seconds)))
+	return "%d:%02d" % [total / 60, total % 60]
 
 
 func _build_ui() -> void:
@@ -149,8 +254,10 @@ func _build_ui() -> void:
 	ready_anim = ReadyAnim.new()
 	add_child(ready_anim)
 	ready_anim.audio_cue.connect(_on_ready_audio_cue)
-	if SettingsStore.show_ready_animation:
-		# 切场后的首帧立即锁在纯黑状态；谱面解析期间禁止 HUD/判定区抢先闪现。
+	if SettingsStore.show_ready_animation and not _training_mode:
+		# 正式对局切场后的首帧立即锁在纯黑状态；谱面解析期间禁止 HUD/判定区抢先闪现。
+		# 训练局使用独立预备拍，不得进入 READY 第 0 帧，否则 stop() 后时间轴仍未完成，
+		# 每帧 reveal 更新会永久保持全黑并隐藏主 HUD/判定区。
 		ready_anim.prime()
 		hud.position = _hud_base_position + Vector2(0, -260.0)
 		hud.modulate = Color(1, 1, 1, 0.0)
@@ -159,7 +266,7 @@ func _build_ui() -> void:
 		bg_dim.color = Color(0, 0, 0, ready_anim.intro_mask_alpha())
 	else:
 		ready_anim.stop()
-		bg_dim.modulate = Color.WHITE
+		_restore_gameplay_reveal_state()
 
 	esc_menu = EscMenu.new(true)
 	esc_menu.couple_mode = _is_couple_mode()
@@ -168,8 +275,14 @@ func _build_ui() -> void:
 	esc_menu.quit_requested.connect(_on_quit_song)
 	esc_menu.resumed.connect(_on_esc_resumed)
 	esc_menu.setting_changed.connect(_on_setting_changed)
+	AudioDirector.apply_music_volume(music_player)
+	if not AudioDirector.audio_settings_changed.is_connected(_sync_music_volume):
+		AudioDirector.audio_settings_changed.connect(_sync_music_volume)
 	_build_gameplay_assists()
+	_apply_effect_settings()
 	_refresh_autoplay_badge()
+	if _training_mode:
+		_build_training_hud()
 
 
 func _hud_tex(parent: Control, node_name: String, texture: Texture2D, rect: Rect2,
@@ -212,6 +325,12 @@ func _configure_original_hud(bb: Dictionary) -> void:
 	_set_control_rect(avatar_frame, Rect2(165, -18, 205, 205))
 	avatar_frame.z_index = 100
 
+	_reward_avatar_frame = RewardAvatarFrameScript.new()
+	_reward_avatar_frame.name = "EquippedRewardAvatarFrame"
+	_reward_avatar_frame.z_index = 101
+	hud.add_child(_reward_avatar_frame)
+	_reward_avatar_frame.set_avatar_target(avatar.get_rect(), 3.0)
+
 	avatar_frame_fx = _ensure_hud_texture("AvatarFrameFx", Rect2(129, -49, 281, 262), 102)
 	_avatar_fx_frames = _atlas_frames(
 		AssetLoader.atlas("UI-img/游戏界面/血条/头像框特效"), "MovieClip8_", 30)
@@ -245,6 +364,15 @@ func _configure_original_hud(bb: Dictionary) -> void:
 	nickname.add_theme_color_override("font_color", Color(249.0 / 255.0, 1.0, 63.0 / 255.0))
 	nickname.add_theme_constant_override("outline_size", 0)
 	_apply_gameplay_nickname(str(ProfileStore.profile.get("昵称", "玩家")))
+	_reward_title_badge = RewardTitleBadgeScript.new()
+	_reward_title_badge.name = "EquippedRewardTitleBadge"
+	_reward_title_badge.position = Vector2(520, 124)
+	_reward_title_badge.size = Vector2(128, 34)
+	_reward_title_badge.z_index = 115
+	hud.add_child(_reward_title_badge)
+	_refresh_gameplay_reward_identity()
+	if not RewardService.loadout_changed.is_connected(_on_reward_loadout_changed):
+		RewardService.loadout_changed.connect(_on_reward_loadout_changed)
 
 	var score_font := FontVariation.new()
 	score_font.base_font = load("res://assets/fonts/fzhei.ttf") as Font
@@ -417,6 +545,11 @@ void fragment() {
 
 
 func _build_gameplay_assists() -> void:
+	stage_awakening_fx = StageAwakeningFxScript.new()
+	stage_awakening_fx.name = "StageAwakeningFx"
+	stage_awakening_fx.background_zoom_changed.connect(_apply_stage_background_zoom)
+	add_child(stage_awakening_fx)
+
 	combo_milestone_fx = ComboMilestoneFx.new()
 	combo_milestone_fx.name = "ComboMilestoneFx"
 	combo_milestone_fx.level_changed.connect(_on_combo_fx_level_changed)
@@ -441,17 +574,148 @@ func _build_gameplay_assists() -> void:
 
 func _on_combo_fx_level_changed(level: int) -> void:
 	if note_field != null:
-		note_field.set_combo_gold_fx_level(level)
+		note_field.set_combo_gold_fx_level(level if SettingsStore.runtime_effect_enabled() else 0)
+		if note_field.has_method("set_combo_arrow_overlay_enabled"):
+			note_field.set_combo_arrow_overlay_enabled(SettingsStore.runtime_effect_enabled(
+				SettingsStore.combo_arrow_overlay_enabled))
 
 
 func _on_combo_lane_fx_changed(enabled: bool) -> void:
 	if note_field != null and note_field.has_method("set_combo_lane_fx_enabled"):
-		note_field.set_combo_lane_fx_enabled(enabled)
+		note_field.set_combo_lane_fx_enabled(enabled \
+			and SettingsStore.runtime_effect_enabled(
+				SettingsStore.combo_lane_particles_enabled))
 
 
 func _on_combo_fx_visibility_changed(value: float) -> void:
 	if note_field != null and note_field.has_method("set_combo_gold_fx_visibility"):
-		note_field.set_combo_gold_fx_visibility(value)
+		# 可见度同时驱动独立轨道层；箭头开关只负责解绑箭头材质，不能把轨道透明度清零。
+		note_field.set_combo_gold_fx_visibility(
+			value if SettingsStore.runtime_effect_enabled() else 0.0)
+
+
+func _apply_effect_settings() -> void:
+	_apply_performance_mode_setting()
+
+
+func _apply_performance_mode_setting() -> void:
+	var heavy_effects_enabled := SettingsStore.runtime_effect_enabled()
+	if note_field != null and note_field.has_method("set_heavy_effects_enabled"):
+		note_field.set_heavy_effects_enabled(heavy_effects_enabled)
+	_apply_vinyl_particles_setting()
+	if heavy_effects_enabled:
+		_restore_combo_effects_for_current_combo()
+	else:
+		if combo_milestone_fx != null:
+			combo_milestone_fx.stop_effect()
+		if stage_awakening_fx != null:
+			stage_awakening_fx.reset_immediate()
+		_last_combo_milestone = ComboMilestoneFx.effect_stage_for_combo(
+			score.current_combo if score != null else 0)
+	_apply_combo_arrow_overlay_setting()
+	_apply_combo_lane_particles_setting()
+	_apply_hp_overdrive_setting()
+	_apply_spectrum_setting()
+	_apply_avatar_frame_animation_setting()
+	_refresh_gameplay_reward_identity()
+
+
+func _restore_combo_effects_for_current_combo() -> void:
+	var combo := score.current_combo if score != null else 0
+	if stage_awakening_fx != null:
+		stage_awakening_fx.set_combo(combo, false)
+	var stage := ComboMilestoneFx.effect_stage_for_combo(combo)
+	_last_combo_milestone = stage
+	if combo_milestone_fx != null:
+		if stage == 50:
+			combo_milestone_fx.play_arrow_stage(50, false)
+		elif stage >= 100:
+			combo_milestone_fx.play_milestone(stage, false)
+		else:
+			combo_milestone_fx.stop_effect()
+	elif note_field != null:
+		note_field.set_combo_gold_fx_level(1 if stage == 50 \
+			else clampi(stage / 100, 0, 3))
+
+
+func _apply_combo_arrow_overlay_setting() -> void:
+	if note_field == null:
+		return
+	var combo := score.current_combo if score != null else 0
+	var stage := ComboMilestoneFx.effect_stage_for_combo(combo)
+	var level := 1 if stage == 50 else clampi(stage / 100, 0, 3)
+	note_field.set_combo_gold_fx_level(level if SettingsStore.runtime_effect_enabled() else 0)
+	if note_field.has_method("set_combo_arrow_overlay_enabled"):
+		note_field.set_combo_arrow_overlay_enabled(SettingsStore.runtime_effect_enabled(
+			SettingsStore.combo_arrow_overlay_enabled))
+
+
+func _apply_combo_lane_particles_setting() -> void:
+	if note_field == null or not note_field.has_method("set_combo_lane_fx_enabled"):
+		return
+	var combo := score.current_combo if score != null else 0
+	note_field.set_combo_lane_fx_enabled(combo >= 100 \
+		and SettingsStore.runtime_effect_enabled(
+			SettingsStore.combo_lane_particles_enabled))
+
+
+func _apply_hp_overdrive_setting() -> void:
+	var enabled := SettingsStore.runtime_effect_enabled(
+		SettingsStore.hp_overdrive_fx_enabled)
+	if not enabled:
+		_reset_hp_overdrive_stage()
+	if hp_full_fx != null:
+		hp_full_fx.visible = enabled and hp != null and hp.is_overdrive()
+	if hp_overdrive_energy != null:
+		hp_overdrive_energy.visible = enabled \
+			and _hp_overdrive_energy_active and hp != null and hp.is_overdrive()
+
+
+func _apply_spectrum_setting() -> void:
+	var enabled := SettingsStore.runtime_effect_enabled(
+		SettingsStore.spectrum_animation_enabled)
+	if stage_spectrum != null:
+		stage_spectrum.set_enabled(enabled)
+	if spectrum != null:
+		spectrum.set_enabled(enabled)
+
+
+func _apply_avatar_frame_animation_setting() -> void:
+	var enabled := SettingsStore.runtime_effect_enabled(
+		SettingsStore.avatar_frame_animation_enabled)
+	if avatar_frame_fx != null and not _avatar_fx_frames.is_empty():
+		if not enabled or _avatar_frame_index < 0:
+			_avatar_frame_index = 0
+			avatar_frame_fx.texture = _avatar_fx_frames[0]
+	if vip_particles != null and not _vip_particle_frames.is_empty():
+		if not enabled or _vip_particle_frame_index < 0:
+			_vip_particle_frame_index = 0
+			vip_particles.texture = _vip_particle_frames[0]
+		vip_particles.visible = enabled
+
+
+func _apply_vinyl_particles_setting() -> void:
+	if vinyl != null and vinyl.has_method("set_particles_enabled"):
+		vinyl.set_particles_enabled(SettingsStore.runtime_effect_enabled())
+
+
+func _apply_stage_background_zoom(value: float) -> void:
+	var zoom := clampf(value, 1.0, 1.03)
+	bg_rect.pivot_offset = bg_rect.size * 0.5
+	bg_rect.scale = Vector2.ONE * zoom
+	if bg_video != null:
+		bg_video.pivot_offset = bg_video.size * 0.5
+		bg_video.scale = Vector2.ONE * zoom
+	if vinyl != null:
+		vinyl.scale = Vector2.ONE * zoom
+
+
+func stage_awakening_state_for_test() -> Dictionary:
+	return {
+		"stage": int(stage_awakening_fx.call("get_stage")) if stage_awakening_fx != null else 0,
+		"zoom": float(stage_awakening_fx.call("get_background_zoom")) if stage_awakening_fx != null else 1.0,
+		"has_fx": stage_awakening_fx != null,
+	}
 
 
 func _refresh_shortcut_hint() -> void:
@@ -513,6 +777,46 @@ func _apply_gameplay_nickname(value: String) -> void:
 			and font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > 270.0:
 		font_size -= 1
 	nickname.add_theme_font_size_override("font_size", font_size)
+	_layout_gameplay_reward_title()
+
+
+func _layout_gameplay_reward_title() -> void:
+	if not is_instance_valid(_reward_title_badge):
+		return
+	var nickname := hud.get_node_or_null("Nickname") as Label
+	if nickname == null:
+		return
+	var font := nickname.get_theme_font("font")
+	var font_size := nickname.get_theme_font_size("font_size")
+	var max_name_width := 110.0
+	var text_width := font.get_string_size(nickname.text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	while font_size > 14 and text_width > max_name_width:
+		font_size -= 1
+		text_width = font.get_string_size(nickname.text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+	nickname.add_theme_font_size_override("font_size", font_size)
+	var title_x := clampf(nickname.position.x + text_width + 8.0, 520.0, 556.0)
+	_reward_title_badge.position = Vector2(title_x, 124)
+	_reward_title_badge.size = Vector2(128, 34)
+	var nickname_width := maxf(72.0, title_x - nickname.position.x - 8.0)
+	nickname.custom_minimum_size = Vector2.ZERO
+	nickname.clip_text = false
+	nickname.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	nickname.size.x = nickname_width
+
+
+func _on_reward_loadout_changed(_loadout: Dictionary) -> void:
+	_refresh_gameplay_reward_identity()
+
+
+func _refresh_gameplay_reward_identity() -> void:
+	var appearance: Dictionary = RewardResolverScript.new().resolve_current()
+	if is_instance_valid(_reward_avatar_frame):
+		_reward_avatar_frame.set_appearance(appearance.get("avatar_frame", {}))
+	if is_instance_valid(_reward_title_badge):
+		_reward_title_badge.set_appearance(appearance.get("title", {}), 14)
+		_layout_gameplay_reward_title()
 
 
 func _set_control_rect(control: Control, rect: Rect2) -> void:
@@ -651,7 +955,7 @@ func _mk_label(parent: Control, size: int, pos: Vector2, color: Color) -> Label:
 
 
 func _apply_brightness() -> void:
-	bg_dim.color = Color(0, 0, 0, 0.45 + 0.1 * float(SettingsStore.background_brightness_level))
+	bg_dim.color = Color(0, 0, 0, SettingsStore.background_dim_alpha())
 
 
 func _load_gameplay_video_stream(path: String) -> VideoStream:
@@ -666,6 +970,26 @@ func _load_gameplay_video_stream(path: String) -> VideoStream:
 	return null
 
 
+func _resolve_image_background_path() -> String:
+	if not _resolved_image_background_path.is_empty():
+		return _resolved_image_background_path
+	var names := AssetLoader.list_resources("冷资源/backimages/背景图",
+		["png", "jpg", "jpeg", "webp"])
+	names.sort_custom(func(a: String, b: String): return a.naturalnocasecmp_to(b) < 0)
+	if names.is_empty():
+		_resolved_image_background_path = str(payload.get("cover", ""))
+		return _resolved_image_background_path
+	var selected_index := names.find(SettingsStore.image_background_name)
+	if selected_index < 0:
+		selected_index = 0
+	if SettingsStore.image_slideshow:
+		selected_index = SettingsStore.next_image_slideshow_index(names.size(), selected_index)
+		SettingsStore.image_background_name = str(names[selected_index])
+	_resolved_image_background_path = AssetLoader.abs_path(
+		"冷资源/backimages/背景图".path_join(str(names[selected_index])))
+	return _resolved_image_background_path
+
+
 func _apply_background_mode() -> void:
 	if bg_video != null:
 		bg_video.stop()
@@ -678,7 +1002,9 @@ func _apply_background_mode() -> void:
 	var mode := str(SettingsStore.background_mode)
 	var use_vinyl := mode == "动态背景" \
 		and str(SettingsStore.dynamic_background_mode) == "唱片"
-	bg_rect.texture = AssetLoader.tex(str(payload.get("cover", ""))) if mode == "图片" else null
+	bg_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	bg_rect.texture = AssetLoader.tex(_resolve_image_background_path()) if mode == "图片" else null
 	bg_rect.modulate.a = 0.12 if use_vinyl else 1.0
 
 	if mode == "视频":
@@ -705,8 +1031,12 @@ func _apply_background_mode() -> void:
 		vinyl.setup(str(payload.get("cover", "")))
 		add_child(vinyl)
 		move_child(vinyl, _note_field_region.get_index())
+		vinyl.set_particles_enabled(SettingsStore.runtime_effect_enabled())
 		if conductor != null and conductor.is_paused():
 			vinyl.set_paused(true)
+	var awakening_zoom: float = float(stage_awakening_fx.call("get_background_zoom")) \
+		if stage_awakening_fx != null else 1.0
+	_apply_stage_background_zoom(awakening_zoom)
 	_apply_brightness()
 
 
@@ -716,6 +1046,8 @@ func background_state_for_test() -> Dictionary:
 		"has_video": bg_video != null,
 		"has_vinyl": vinyl != null,
 		"has_image": bg_rect.texture != null,
+		"image_path": _resolved_image_background_path,
+		"image_stretch_mode": bg_rect.stretch_mode,
 	}
 
 
@@ -811,6 +1143,9 @@ func _load_chart() -> bool:
 	_hand_cursor = 0
 	var timeline: Array = result.get("timeline", [])
 	var offset := float(result.get("offset", 0.0))
+	_analysis_chart_key = str(payload.get("sm_key", sm_path)).strip_edges()
+	if _analysis_chart_key.is_empty():
+		_analysis_chart_key = sm_path
 
 	# 歌曲长度必须以实际音频流为准。DIY JSON 可能用 0.001 BPM 表示终局冻结，
 	# 若只信谱面积分时长，会把两三分钟歌曲算成数十小时。
@@ -836,7 +1171,17 @@ func _load_chart() -> bool:
 		if events.is_empty():
 			_load_error = "谱面音符全部超出歌曲音频时长"
 			return false
-	music_player.volume_db = linear_to_db(0.9 if not SettingsStore.muted else 0.0001)
+	AudioDirector.apply_music_volume(music_player)
+	music_player.pitch_scale = _training_runtime.speed if _training_mode else 1.0
+
+	if _training_mode:
+		_training_runtime.set_timeline(timeline, offset)
+		_training_runtime.clamp_segment(chart_duration)
+		events = _training_runtime.slice_events(events, timeline, offset)
+		hand_events = _training_runtime.slice_events(hand_events, timeline, offset)
+		if events.is_empty():
+			_load_error = "所选训练片段内没有可玩的音符"
+			return false
 
 	var b2s := func(beat: float) -> float:
 		return SmParser.beat_to_sec(beat, timeline) - offset
@@ -853,8 +1198,15 @@ func _load_chart() -> bool:
 
 	score = ScoreSystem.new(int(chart["total_score"]))
 	hp = HpSystem.new()
+	_analysis_eligible = not _training_mode and not judge.auto_mode \
+		and bool((payload.get("run_eligibility", {}) as Dictionary).get("official_record", true))
+	_run_analytics = null if _training_mode else JudgementAnalytics.new(track_count)
+	if _training_mode:
+		_training_runtime.capture_chart(chart_notes, hand_events, track_count)
 
 	note_field.setup(track_count, SettingsStore.scroll_speed, _is_couple_mode())
+	# 与原版一致：谱面自带 BPMS 始终驱动视觉卷轴；判定和音频仍使用秒时间轴。
+	note_field.configure_bpm_scroll(result.get("bpms", []), timeline, offset)
 	if combo_milestone_fx != null:
 		combo_milestone_fx.configure_track_rect(note_field.combo_fx_track_rect())
 	note_field.load_notes(chart_notes)
@@ -904,33 +1256,45 @@ func _start() -> void:
 	_set_visual_pause(false)
 	if combo_milestone_fx != null:
 		combo_milestone_fx.stop_effect()
+	if stage_awakening_fx != null:
+		stage_awakening_fx.reset_immediate()
 	if note_field != null:
 		note_field.set_combo_gold_fx_enabled(false, 0.0)
 	AudioDirector.stop_bgm()
 	var lead_in := 0.0
-	if SettingsStore.show_ready_animation and ready_anim != null:
+	if _training_mode:
+		lead_in = _training_runtime.preroll_seconds()
+		ready_anim.stop()
+		_restore_gameplay_reveal_state()
+	elif SettingsStore.show_ready_animation and ready_anim != null:
 		lead_in = ready_anim.total_duration()
 		ready_anim.play()
 	else:
 		ready_anim.stop()
 	if conductor != null:
-		conductor.start(lead_in)
+		conductor.start(lead_in,
+			_training_runtime.runtime_start_sec if _training_mode else 0.0)
+	if _training_mode:
+		_refresh_training_hud()
 
 
 func _find_gameplay_video_path() -> String:
-	var explicit := str(payload.get("video", "")).strip_edges()
-	if not explicit.is_empty() and FileAccess.file_exists(explicit):
-		return explicit
 	var directory := AssetLoader.abs_path("backmovies/游戏中")
 	var candidates: Array[String] = []
 	for entry in AssetLoader.list_resources(directory,
-			["mp4", "avi", "mpg", "mpeg", "webm", "mov"]):
-		candidates.append(directory.path_join(entry))
+			["mp4", "avi", "mpg", "mpeg", "webm", "mov", "ogv"]):
+		candidates.append(entry)
+	candidates.sort_custom(func(a: String, b: String): return a.naturalnocasecmp_to(b) < 0)
+	var selected := str(SettingsStore.video_background_name).strip_edges()
+	if not selected.is_empty() and selected in candidates:
+		return directory.path_join(selected)
+	var explicit := str(payload.get("video", "")).strip_edges()
+	if not explicit.is_empty() and FileAccess.file_exists(explicit):
+		return explicit
 	if candidates.is_empty():
 		return ""
-	var seed_text := str(payload.get("sm_key", payload.get("name", "gameplay")))
-	var index := int(abs(hash(seed_text))) % candidates.size()
-	return candidates[index]
+	SettingsStore.video_background_name = candidates[0]
+	return directory.path_join(candidates[0])
 
 
 func _on_music_started() -> void:
@@ -967,6 +1331,10 @@ func _stop_gameplay_video() -> void:
 		bg_video.stop()
 
 
+func _sync_music_volume() -> void:
+	AudioDirector.apply_music_volume(music_player)
+
+
 func _on_setting_changed(key: String) -> void:
 	match key:
 		"autoplay":
@@ -978,7 +1346,9 @@ func _on_setting_changed(key: String) -> void:
 			note_field.scroll_speed_mult = SettingsStore.scroll_speed
 		"brightness":
 			_apply_brightness()
-		"background_mode", "dynamic_background":
+		"background_mode", "dynamic_background", "image_background", "image_slideshow", \
+				"video_background":
+			_resolved_image_background_path = ""
 			_apply_background_mode()
 		"arrow_skin", "arrow_size", "direction_mode":
 			# 情侣局强制专用图集；普通局才读取用户皮肤。
@@ -990,6 +1360,18 @@ func _on_setting_changed(key: String) -> void:
 			pass
 		"profile":
 			_refresh_profile_hud()
+		"performance_mode":
+			_apply_performance_mode_setting()
+		"combo_lane_particles":
+			_apply_combo_lane_particles_setting()
+		"combo_arrow_overlay":
+			_apply_combo_arrow_overlay_setting()
+		"hp_overdrive_fx":
+			_apply_hp_overdrive_setting()
+		"spectrum_animation":
+			_apply_spectrum_setting()
+		"avatar_frame_animation":
+			_apply_avatar_frame_animation_setting()
 		"hit_sound", "display_mode":
 			_refresh_shortcut_hint()
 
@@ -1071,6 +1453,8 @@ func _toggle_space_pause() -> void:
 	else:
 		conductor.pause()
 		_set_visual_pause(true)
+	if _training_mode:
+		_refresh_training_hud()
 
 
 func _on_esc_resumed() -> void:
@@ -1096,6 +1480,8 @@ func _set_visual_pause(value: bool) -> void:
 		note_field.set_visual_paused(value)
 	if combo_milestone_fx != null:
 		combo_milestone_fx.set_paused(value)
+	if stage_awakening_fx != null:
+		stage_awakening_fx.set_paused(value)
 
 
 func _track_action(track: int) -> String:
@@ -1108,6 +1494,17 @@ func _is_track_pressed(track: int) -> bool:
 	return Input.is_action_pressed(_track_action(track))
 
 
+func _note_visual_time(raw_chart_time: float, smoothed_chart_time: float) -> float:
+	# 原版的判定与谱面渲染共用同一个“当前谱面秒”。
+	# 高 BPM 变速区不能使用 Conductor 的平滑时钟：哪怕只滞后 20~30ms，
+	# 1045 BPM 也会把视觉音符拉离判定线数百像素，玩家按着画面就会持续 Late/Miss。
+	return raw_chart_time if is_finite(raw_chart_time) else smoothed_chart_time
+
+
+func note_visual_time_for_test(raw_chart_time: float, smoothed_chart_time: float) -> float:
+	return _note_visual_time(raw_chart_time, smoothed_chart_time)
+
+
 func _process(delta: float) -> void:
 	if not _chart_ready or conductor == null or score == null or hp == null or note_field == null:
 		return
@@ -1117,56 +1514,92 @@ func _process(delta: float) -> void:
 	if _ended or conductor.is_paused():
 		return
 
-	var t := conductor.tick()
+	var smoothed := conductor.tick()
 	raw = conductor.get_chart_time_raw()
+	var visual_time := _note_visual_time(raw, smoothed)
+	_update_training_metronome(raw)
 
 	var reports: Array = judge.update(raw, _is_track_pressed)
 	_apply_reports(reports)
 
 	# 手键 tap/Hold 特效由 NoteField 按事件起止时间管理；避免 Gameplay 再次单发导致重影。
-	note_field.update_field(t, delta)
+	# 视觉与判定必须使用同源时钟，尤其是 Nu ABO 这类 1045/4.13 BPM 花活谱。
+	note_field.update_field(visual_time, delta)
 	if vinyl != null:
 		vinyl.on_combo(score.current_combo)
 	_update_hud()
 
-	var reached_chart_end := chart_duration > 0.0 and raw >= chart_duration
+	var playback_end := _training_runtime.end_sec if _training_mode else chart_duration
+	var reached_chart_end := playback_end > 0.0 and raw >= playback_end
 	var reached_audio_end := _audio_finished and _started_play
 	if reached_chart_end or reached_audio_end:
 		_finish_wait += delta
 		if _finish_wait > 0.45:
-			_finish_song(false)
+			if _training_mode:
+				_complete_training_loop()
+			else:
+				_finish_song(false)
 	else:
 		_finish_wait = 0.0
+
+
+func _update_training_metronome(chart_time: float) -> void:
+	if _training_mode and _training_runtime.should_emit_metronome(chart_time):
+		AudioDirector.play_hit_tick()
 
 
 func _apply_reports(reports: Array) -> void:
 	if reports.is_empty():
 		return
 	score.settle_all(reports)
+	var rewind_at := -1.0
+	var last_timing: Variant = null
 	for r in reports:
 		note_field.on_report(r)
+		if _run_analytics != null:
+			_run_analytics.add_report(r, score.current_combo, judge.auto_mode)
+		if _training_mode:
+			var training_result := _training_runtime.add_report(
+				r, score.current_combo, judge.auto_mode)
+			if training_result.get("timing_diff") != null:
+				last_timing = training_result["timing_diff"]
+			rewind_at = maxf(rewind_at, float(training_result.get("rewind_at", -1.0)))
 	var dead := hp.apply_reports(reports)
 	note_field.set_grayscale(hp.is_low())
+	if _training_mode:
+		_refresh_training_hud(last_timing)
+		if rewind_at >= 0.0 and not _training_rewind_pending:
+			_training_rewind_pending = true
+			call_deferred("_restart_training_loop", rewind_at, true)
+		if dead:
+			hp = HpSystem.new()
+			note_field.set_grayscale(false)
+		return
 	if dead:
 		_finish_song(true)
 
 
-func _update_ready_reveal() -> void:
-	if ready_anim == null or not SettingsStore.show_ready_animation \
-			or ready_anim.is_complete():
-		hud.position = _hud_base_position
-		hud.modulate = Color.WHITE
+func _restore_gameplay_reveal_state() -> void:
+	hud.position = _hud_base_position
+	hud.modulate = Color.WHITE
+	if note_field != null:
 		note_field.modulate = Color.WHITE
 		note_field.scale = Vector2.ONE
 		note_field.position = Vector2.ZERO
-		bg_dim.modulate = Color.WHITE
-		_apply_brightness()
+	bg_dim.modulate = Color.WHITE
+	_apply_brightness()
+
+
+func _update_ready_reveal() -> void:
+	if _training_mode or ready_anim == null or not SettingsStore.show_ready_animation \
+			or ready_anim.is_complete():
+		_restore_gameplay_reveal_state()
 		return
 
 	# 黑幕位于背景之上、判定区和 HUD 之下。它只负责背景明暗，不参与 UI 透明度。
 	# 引导组右退时，把 70% 黑幕平滑交还给玩家设置，避免 GAME START 后亮度突然跳变。
 	bg_dim.modulate = Color.WHITE
-	var configured_dim_alpha := 0.45 + 0.1 * float(SettingsStore.background_brightness_level)
+	var configured_dim_alpha := SettingsStore.background_dim_alpha()
 	var intro_dim_alpha := lerpf(ready_anim.intro_mask_alpha(), configured_dim_alpha,
 		ready_anim.exit_progress())
 	bg_dim.color = Color(0, 0, 0, intro_dim_alpha)
@@ -1200,6 +1633,9 @@ func _reset_hp_overdrive_stage() -> void:
 
 
 func _update_hp_overdrive_stage(delta: float) -> void:
+	if not SettingsStore.runtime_effect_enabled(SettingsStore.hp_overdrive_fx_enabled):
+		_reset_hp_overdrive_stage()
+		return
 	if hp == null or not hp.is_overdrive():
 		_reset_hp_overdrive_stage()
 		return
@@ -1227,7 +1663,8 @@ func _update_stage_motion(chart_time: float) -> void:
 	var board_rotation := deg_to_rad(fmod(chart_time * STAGE_BOARD_ROTATION_DEG, 360.0))
 	if stage_board != null:
 		stage_board.rotation = board_rotation
-	if stage_spectrum != null:
+	if stage_spectrum != null and SettingsStore.runtime_effect_enabled(
+			SettingsStore.spectrum_animation_enabled):
 		# 频谱线角度保持稳定，只让其起始轮廓跟随 board.png 旋转，和原版一致。
 		stage_spectrum.rotation = 0.0
 		stage_spectrum.set_edge_rotation(board_rotation)
@@ -1247,22 +1684,39 @@ func _update_dynamic_hud(chart_time: float, delta: float) -> void:
 	hp_full_fx.position.x = HP_OVERDRIVE_BASE_X + wave
 	var overdrive_phase := _hp_overdrive_offset(chart_time)
 	var overdrive_pulse := 0.5 + 0.5 * sin(chart_time * TAU * 1.8)
-	if _hp_overdrive_material != null:
-		_hp_overdrive_material.set_shader_parameter("phase_pixels", overdrive_phase)
-		_hp_overdrive_material.set_shader_parameter("pulse", overdrive_pulse)
-	if hp_overdrive_energy != null and hp != null:
-		hp_overdrive_energy.set_energy_state(
-			_hp_overdrive_energy_active and hp.is_overdrive(), overdrive_phase,
-			overdrive_pulse, wave)
+	if SettingsStore.runtime_effect_enabled(SettingsStore.hp_overdrive_fx_enabled):
+		if _hp_overdrive_material != null:
+			_hp_overdrive_material.set_shader_parameter("phase_pixels", overdrive_phase)
+			_hp_overdrive_material.set_shader_parameter("pulse", overdrive_pulse)
+		if hp_overdrive_energy != null and hp != null:
+			hp_overdrive_energy.set_energy_state(
+				_hp_overdrive_energy_active and hp.is_overdrive(), overdrive_phase,
+				overdrive_pulse, wave)
 	var avatar := hud.get_node_or_null("Avatar") as TextureRect
 	if avatar != null:
 		avatar.rotation = sin(chart_time * 0.8) * 0.035
-	if avatar_frame_fx != null and not _avatar_fx_frames.is_empty():
-		avatar_frame_fx.texture = _avatar_fx_frames[int(maxf(0.0, chart_time) * 30.0) % _avatar_fx_frames.size()]
-	if vip_particles != null and not _vip_particle_frames.is_empty():
+	if SettingsStore.runtime_effect_enabled(SettingsStore.avatar_frame_animation_enabled) \
+			and avatar_frame_fx != null and not _avatar_fx_frames.is_empty():
+		var next_avatar_frame := int(maxf(0.0, chart_time) * 30.0) % _avatar_fx_frames.size()
+		# 144/240Hz 下同一张纹理原来会被重复赋值 4~8 次，造成无意义的 Canvas 状态提交。
+		if next_avatar_frame != _avatar_frame_index:
+			_avatar_frame_index = next_avatar_frame
+			avatar_frame_fx.texture = _avatar_fx_frames[next_avatar_frame]
+	if SettingsStore.runtime_effect_enabled(SettingsStore.avatar_frame_animation_enabled) \
+			and vip_particles != null and not _vip_particle_frames.is_empty():
 		var cycle := fmod(maxf(0.0, chart_time), 2.0)
 		vip_particles.visible = cycle < 0.5
-		vip_particles.texture = _vip_particle_frames[int(cycle * 60.0) % _vip_particle_frames.size()]
+		var next_vip_frame := int(cycle * 60.0) % _vip_particle_frames.size()
+		if next_vip_frame != _vip_particle_frame_index:
+			_vip_particle_frame_index = next_vip_frame
+			vip_particles.texture = _vip_particle_frames[next_vip_frame]
+	if stage_awakening_fx != null and SettingsStore.runtime_effect_enabled():
+		var bass_energy := stage_spectrum.bass_energy_for_visuals() \
+			if stage_spectrum != null and SettingsStore.runtime_effect_enabled(
+				SettingsStore.spectrum_animation_enabled) else 0.0
+		stage_awakening_fx.set_music_energy(bass_energy)
+		stage_awakening_fx.update_performance_budget(
+			float(Engine.get_frames_per_second()), delta)
 	_update_stage_motion(chart_time)
 	if lbl_autoplay.visible:
 		var auto_pulse := 1.0 + 0.035 * (0.5 + 0.5 * sin(chart_time * TAU * 1.6))
@@ -1287,33 +1741,44 @@ func _update_combo_sprite() -> void:
 	var combo := score.current_combo
 	if combo != _combo_last_value:
 		var crossed_stage := ComboMilestoneFx.effect_stage_for_combo(combo)
-		if combo < 50 and _last_combo_milestone >= 50:
-			# 50 Combo 预热阶段也参与缓退，断连后不瞬间撤走箭头金化。
-			_last_combo_milestone = 0
-			if combo_milestone_fx != null:
-				combo_milestone_fx.start_decay()
-			elif note_field != null:
-				note_field.set_combo_gold_fx_level(0)
-				if note_field.has_method("set_combo_lane_fx_enabled"):
-					note_field.set_combo_lane_fx_enabled(false)
-		elif crossed_stage > _last_combo_milestone:
+		if SettingsStore.performance_mode:
+			# 性能模式期间只记录当前档位，禁止任何 Combo 特效重新拉起。
 			_last_combo_milestone = crossed_stage
-			if combo_milestone_fx != null:
-				if crossed_stage == 50:
-					combo_milestone_fx.play_arrow_stage(50, SettingsStore.performance_mode)
-				else:
-					combo_milestone_fx.play_milestone(crossed_stage, SettingsStore.performance_mode)
-			elif note_field != null:
-				note_field.set_combo_gold_fx_level(1 if crossed_stage == 50 \
-					else clampi(crossed_stage / 100, 1, 3))
-				if note_field.has_method("set_combo_lane_fx_enabled"):
-					note_field.set_combo_lane_fx_enabled(crossed_stage >= 100)
+		else:
+			if stage_awakening_fx != null:
+				stage_awakening_fx.set_combo(combo, false)
+			if combo < 50 and _last_combo_milestone >= 50:
+				# 50 Combo 预热阶段也参与缓退，断连后不瞬间撤走箭头金化。
+				_last_combo_milestone = 0
+				if combo_milestone_fx != null:
+					combo_milestone_fx.start_decay()
+				elif note_field != null:
+					note_field.set_combo_gold_fx_level(0)
+					if note_field.has_method("set_combo_lane_fx_enabled"):
+						note_field.set_combo_lane_fx_enabled(false)
+			elif crossed_stage > _last_combo_milestone:
+				_last_combo_milestone = crossed_stage
+				if combo_milestone_fx != null:
+					if crossed_stage == 50:
+						combo_milestone_fx.play_arrow_stage(50, false)
+					else:
+						combo_milestone_fx.play_milestone(crossed_stage, false)
+				elif note_field != null:
+					note_field.set_combo_gold_fx_level(1 if crossed_stage == 50 \
+						else clampi(crossed_stage / 100, 1, 3))
+					if note_field.has_method("set_combo_lane_fx_enabled"):
+						note_field.set_combo_lane_fx_enabled(crossed_stage >= 100 \
+							and SettingsStore.runtime_effect_enabled(
+								SettingsStore.combo_lane_particles_enabled))
+		# Combo 数字只在数值变化时重建。旧逻辑每个渲染帧删除并创建整组 TextureRect，
+		# 这是特效全开时主线程掉到约 40~50 FPS 的主要原因之一。
+		for i in combo_groups.size():
+			_rebuild_combo_digits(combo_digit_groups[i], combo, combo_prefixes[i])
 		_combo_last_value = combo
 		if combo >= 2 and not score.last_judge.is_empty():
 			_combo_anim_t = 0.75
 	var judge_name := score.last_judge if score.last_judge in ["perfect", "cool", "good", "miss"] else "perfect"
 	for i in combo_groups.size():
-		_rebuild_combo_digits(combo_digit_groups[i], combo, combo_prefixes[i])
 		# 自动播放沿用唯一中央计数组：持续显示，并在每次自动命中时继续回弹。
 		var show := combo >= 2 and (_combo_anim_t > 0.0 or (judge != null and judge.auto_mode))
 		combo_groups[i].visible = show
@@ -1325,37 +1790,50 @@ func _update_combo_sprite() -> void:
 func _rebuild_combo_digits(target: Control, combo: int, prefix: String) -> void:
 	if target == null:
 		return
-	for child in target.get_children():
-		target.remove_child(child)
-		child.queue_free()
-	if combo < 2:
+	var keys: Array[String] = []
+	if combo >= 2:
+		keys.append("x")
+		for ch in str(combo):
+			keys.append(ch)
+
+	# 节点池：高密谱的 Hold Tick 可能让 Combo 几乎每帧变化。
+	# 只按历史最大位数扩容，后续仅换纹理/矩形，禁止反复 free/new 触发主线程抖动。
+	while target.get_child_count() < keys.size():
+		var pooled := TextureRect.new()
+		pooled.name = "Digit%d" % target.get_child_count()
+		pooled.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pooled.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pooled.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		target.add_child(pooled)
+	for child_index in target.get_child_count():
+		var child := target.get_child(child_index) as TextureRect
+		if child != null:
+			child.visible = child_index < keys.size()
+	if keys.is_empty():
 		return
-	var keys: Array[String] = ["x"]
-	for ch in str(combo):
-		keys.append(ch)
+
 	var target_h := 79.0
 	var gap := 3.0
+	var textures: Array[Texture2D] = []
 	var widths: Array[float] = []
 	var total_w := 0.0
 	for key in keys:
 		var tex: Texture2D = _combo_texture("digit", key, prefix)
-		var w := target_h * 0.7
+		textures.append(tex)
+		var width := target_h * 0.7
 		if tex != null and tex.get_height() > 0:
-			w = target_h * float(tex.get_width()) / float(tex.get_height())
-		widths.append(w)
-		total_w += w
+			width = target_h * float(tex.get_width()) / float(tex.get_height())
+		widths.append(width)
+		total_w += width
 	total_w += gap * maxi(0, keys.size() - 1)
 	var x := -total_w * 0.5
 	for i in keys.size():
-		var view := TextureRect.new()
-		view.name = "Digit%d" % i
-		view.texture = _combo_texture("digit", keys[i], prefix)
+		var view := target.get_child(i) as TextureRect
+		if view == null:
+			continue
+		view.texture = textures[i]
 		view.position = Vector2(x, 0)
 		view.size = Vector2(widths[i], target_h)
-		view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		view.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		view.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		target.add_child(view)
 		x += widths[i] + gap
 
 
@@ -1383,18 +1861,135 @@ func _update_hud() -> void:
 		hp_bar_fill_tr.modulate = Color(1.6, 0.4, 0.4)
 	else:
 		hp_bar_fill_tr.modulate = Color.WHITE
-	hp_full_fx.visible = hp.is_overdrive()
+	var hp_fx_enabled := SettingsStore.runtime_effect_enabled(
+		SettingsStore.hp_overdrive_fx_enabled)
+	hp_full_fx.visible = hp_fx_enabled and hp.is_overdrive()
 	if hp_full_fx.visible:
 		hp_full_fx.modulate = Color.WHITE
 	if hp_overdrive_energy != null:
-		hp_overdrive_energy.visible = _hp_overdrive_energy_active and hp.is_overdrive()
+		hp_overdrive_energy.visible = hp_fx_enabled \
+			and _hp_overdrive_energy_active and hp.is_overdrive()
+
+
+func _restart_training_loop(from_sec := -1.0, from_miss := false) -> void:
+	if not _training_mode or not is_inside_tree():
+		return
+	var target_start := _training_runtime.start_sec if from_sec < 0.0 else from_sec
+	_training_runtime.set_runtime_start(target_start)
+	target_start = _training_runtime.runtime_start_sec
+	var notes := _training_runtime.notes_from(target_start)
+	if notes.is_empty():
+		target_start = _training_runtime.start_sec
+		_training_runtime.set_runtime_start(target_start)
+		notes = _training_runtime.chart_notes.duplicate()
+	conductor.stop()
+	music_player.pitch_scale = _training_runtime.speed
+	judge.load_chart(notes)
+	judge.auto_mode = SettingsStore.autoplay
+	judge.input_offset_sec = float(SettingsStore.chart_offset_ms) / 1000.0
+	score = ScoreSystem.new(_training_runtime.score_for_notes(notes))
+	hp = HpSystem.new()
+	_training_runtime.reset_analysis(track_count)
+	note_field.load_notes(notes)
+	note_field.load_hand_events(_training_runtime.hands_from(target_start))
+	note_field.set_grayscale(false)
+	_combo_anim_t = 0.0
+	_combo_last_value = -1
+	_last_combo_milestone = 0
+	_reset_hp_overdrive_stage()
+	if combo_milestone_fx != null:
+		combo_milestone_fx.stop_effect()
+	if stage_awakening_fx != null:
+		stage_awakening_fx.reset_immediate()
+	note_field.set_combo_gold_fx_enabled(false, 0.0)
+	_ended = false
+	_finish_wait = 0.0
+	_started_play = false
+	_audio_finished = false
+	_training_rewind_pending = false
+	if ready_anim != null:
+		ready_anim.stop()
+	hud.position = _hud_base_position
+	hud.modulate = Color.WHITE
+	note_field.modulate = Color.WHITE
+	note_field.position = Vector2.ZERO
+	note_field.scale = Vector2.ONE
+	_apply_brightness()
+	conductor.start(_training_runtime.preroll_seconds(target_start), target_start)
+	if from_miss and _training_timing_label != null:
+		_training_timing_label.text = "失误回退到 %s" % _format_training_time(target_start)
+	_refresh_training_hud()
+
+
+func _complete_training_loop() -> void:
+	if not _training_mode or _ended:
+		return
+	conductor.stop()
+	var summary := _training_runtime.summary()
+	TrainingSession.set_last_summary(summary)
+	if not _training_runtime.has_more_loops():
+		_finish_training(summary)
+		return
+	_training_runtime.advance_loop()
+	_restart_training_loop(_training_runtime.start_sec, false)
+
+
+func _finish_training(summary: Dictionary = {}) -> void:
+	if not _training_mode or _ended:
+		return
+	_ended = true
+	conductor.stop()
+	music_player.pitch_scale = 1.0
+	_reset_hp_overdrive_stage()
+	if combo_milestone_fx != null:
+		combo_milestone_fx.stop_effect()
+	if stage_awakening_fx != null:
+		stage_awakening_fx.reset_immediate()
+	if note_field != null:
+		note_field.set_combo_gold_fx_enabled(false, 0.0)
+	_stop_gameplay_video()
+	var final_summary := summary
+	if final_summary.is_empty():
+		final_summary = _training_runtime.summary()
+	TrainingSession.set_last_summary(final_summary)
+	var song_payload := payload.duplicate(true)
+	for key in ["training_mode", "training_config", "run_eligibility"]:
+		song_payload.erase(key)
+	var return_config := _training_runtime.config.duplicate(true)
+	final_summary["chart_key"] = str(payload.get("sm_key", payload.get("name", "training")))
+	RewardMilestoneService.process_training_completion(return_config, final_summary)
+	TrainingSession.finish(false)
+	SceneRouter.change_to("training_setup", {
+		"song": song_payload,
+		"training_config": return_config,
+		"summary": final_summary,
+	})
+
+
+func _switch_training_problem_window(direction: int) -> void:
+	if not _training_mode or _training_runtime == null \
+			or not _training_runtime.select_problem_window(direction, chart_duration):
+		return
+	conductor.stop()
+	music_player.stop()
+	_training_rewind_pending = false
+	payload["training_config"] = _training_runtime.config.duplicate(true)
+	if await _load_chart():
+		_start()
+	else:
+		_show_load_error(_load_error)
 
 
 func _on_restart() -> void:
+	if _training_mode:
+		_restart_training_loop(_training_runtime.start_sec, false)
+		return
 	conductor.stop()
 	_reset_hp_overdrive_stage()
 	if combo_milestone_fx != null:
 		combo_milestone_fx.stop_effect()
+	if stage_awakening_fx != null:
+		stage_awakening_fx.reset_immediate()
 	if note_field != null:
 		note_field.set_combo_gold_fx_enabled(false, 0.0)
 	if await _load_chart():
@@ -1404,19 +1999,66 @@ func _on_restart() -> void:
 
 
 func _on_quit_song() -> void:
+	if _training_mode:
+		_finish_training(_training_runtime.summary())
+		return
 	_ended = true
 	conductor.stop()
 	_reset_hp_overdrive_stage()
 	if combo_milestone_fx != null:
 		combo_milestone_fx.stop_effect()
+	if stage_awakening_fx != null:
+		stage_awakening_fx.reset_immediate()
 	if note_field != null:
 		note_field.set_combo_gold_fx_enabled(false, 0.0)
 	_stop_gameplay_video()
 	SceneRouter.change_to("song_select", GameState.song_select_restore)
 
 
+func _finalize_analysis_bundle() -> Dictionary:
+	var analysis_summary: Dictionary = _run_analytics.summary() if _run_analytics != null else {}
+	analysis_summary["timestamp"] = int(Time.get_unix_time_from_system())
+	analysis_summary["chart_duration"] = chart_duration
+	analysis_summary["track_count"] = track_count
+	if _run_analytics != null:
+		AnalyticsStore.record_run(_analysis_chart_key, str(payload.get("mode", "竞速")),
+			analysis_summary, _analysis_eligible)
+	var analysis_trend: Dictionary = AnalyticsStore.get_trend(
+		_analysis_chart_key, str(payload.get("mode", "竞速")))
+	var analysis_song_payload: Dictionary = {
+		"sm": str(payload.get("sm", "")),
+		"mp3": str(payload.get("mp3", "")),
+		"cover": str(payload.get("cover", "")),
+		"name": str(payload.get("name", "")),
+		"star": int(payload.get("star", 0)),
+		"mode": str(payload.get("mode", "竞速")),
+		"submode": str(payload.get("submode", "")),
+		"sm_key": str(payload.get("sm_key", "")),
+		"prefer_double": bool(payload.get("prefer_double", false)),
+		"couple": bool(payload.get("couple", false)),
+		"target_charttype": str(payload.get("target_charttype", "")),
+		"style": str(payload.get("style", "")),
+		"bpm": float(payload.get("bpm", 0.0)),
+	}
+	return {
+		"analysis_summary": analysis_summary,
+		"analysis_events": _run_analytics.events() if _run_analytics != null else [],
+		"analysis_trend": analysis_trend,
+		"analysis_chart_key": _analysis_chart_key,
+		"analysis_eligible": _analysis_eligible,
+		"analysis_song": analysis_song_payload,
+	}
+
+
+func analysis_bundle_for_test() -> Dictionary:
+	return _finalize_analysis_bundle()
+
+
 ## 结束 -> 成就动画（全连/全P）-> 结算
 func _finish_song(failed: bool) -> void:
+	if _training_mode:
+		_finish_training(_training_runtime.summary())
+		return
 	if _ended:
 		return
 	_ended = true
@@ -1424,6 +2066,8 @@ func _finish_song(failed: bool) -> void:
 	_reset_hp_overdrive_stage()
 	if combo_milestone_fx != null:
 		combo_milestone_fx.stop_effect()
+	if stage_awakening_fx != null:
+		stage_awakening_fx.reset_immediate()
 	if note_field != null:
 		note_field.set_combo_gold_fx_enabled(false, 0.0)
 	_stop_gameplay_video()
@@ -1431,8 +2075,18 @@ func _finish_song(failed: bool) -> void:
 	var percent := score.get_percent_value()
 	var grade := Grade.from_percent(percent, failed)
 	var flow_result: Dictionary = GameState.flow.settle_round(grade, failed)
+	var analysis_bundle: Dictionary = _finalize_analysis_bundle()
 
-	var settle_payload := {
+	var settle_payload: Dictionary = {
+		"run_id": "%d-%d-%d" % [int(Time.get_unix_time_from_system()), Time.get_ticks_usec(), randi()],
+		"challenge_eligible": not judge.auto_mode,
+		"autoplay": judge.auto_mode,
+		"debug_run": bool(payload.get("debug_run", false)),
+		"random_song": bool(payload.get("random_song", false)),
+		"players": GameState.player_count,
+		"hidden_mode": str(SettingsStore.hidden_mode),
+		"track_mode": str(SettingsStore.track_mode),
+		"direction_mode": str(SettingsStore.direction_mode),
 		"曲目名": str(payload.get("name", "")),
 		"sm_key": str(payload.get("sm_key", "")),
 		"mode": str(payload.get("mode", "竞速")),
@@ -1457,6 +2111,7 @@ func _finish_song(failed: bool) -> void:
 		"是否全perfect": score.is_all_perfect(),
 		"是否全连": score.counts["miss"] <= 0 and not failed,
 	}
+	settle_payload.merge(analysis_bundle, true)
 
 	# 结算前成就动画使用有界等待。即使某个素材/信号异常，也必须在超时后进入结算。
 	var anim_kind := ""
@@ -1474,14 +2129,16 @@ func _play_achievement_with_timeout(anim_kind: String) -> void:
 	var anim := AchievementAnim.new()
 	anim.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(anim)
-	anim.play(anim_kind)
+	if not anim.play(anim_kind, hud, note_field):
+		anim.queue_free()
+		return
 	_play_achievement_sfx(anim_kind)
 	var deadline := Time.get_ticks_msec() + int(ACHIEVEMENT_TIMEOUT_SEC * 1000.0)
 	while is_instance_valid(anim) and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
 	if is_instance_valid(anim):
-		push_warning("Gameplay: 成就动画超时，已强制收口并继续结算 -> %s" % anim_kind)
-		anim.queue_free()
+		push_warning("Gameplay: 成就动画超时，已恢复 HUD 并强制进入结算 -> %s" % anim_kind)
+		anim.abort_and_restore()
 
 
 func _transition_to_settlement(settle_payload: Dictionary) -> void:

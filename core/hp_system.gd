@@ -32,6 +32,8 @@ func apply_reports(reports: Array) -> bool:
 		return false
 	var new_hp := hp
 	for report in reports:
+		if report == null or not report.scoring:
+			continue
 		new_hp += delta_for(report.judge)
 	hp = clampi(new_hp, 0, MAX_HP)
 	return hp <= 0

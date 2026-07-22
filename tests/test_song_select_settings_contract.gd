@@ -63,7 +63,8 @@ func _initialize() -> void:
 	root.get_node("ProfileStore").persist_enabled = false
 	root.get_node("GameState").big_mode = "竞速"
 	root.get_node("GameState").sub_mode = "club"
-	root.get_node("GameState").player_count = 1
+	# 普通双人选歌不等于情侣模式；ESC 箭头皮肤必须仍可切换。
+	root.get_node("GameState").player_count = 2
 
 	var original_skin := str(settings.arrow_skin)
 	var original_size := int(settings.arrow_size_percent)
@@ -76,6 +77,13 @@ func _initialize() -> void:
 	song_select.size = Vector2(1920, 1080)
 	root.add_child(song_select)
 	await process_frame
+	var song_select_esc := song_select.get("esc_menu") as CanvasLayer
+	_check(song_select_esc != null and not bool(song_select_esc.get("couple_mode")) \
+		and str(song_select_esc.call("_get_skin")) == str(settings.arrow_skin),
+		"普通 2P 选歌不会误锁情侣专用箭头皮肤",
+		"submode=%s players=%d skin=%s" % [root.get_node("GameState").sub_mode,
+			root.get_node("GameState").player_count,
+			str(song_select_esc.call("_get_skin")) if song_select_esc else "null"])
 	song_select.set("songs", [_song(12)])
 	song_select.set("selected", 0)
 	song_select.call("_build_page")
@@ -147,8 +155,8 @@ func _initialize() -> void:
 	var brightness_dim := esc.get_node_or_null(
 		"ModernMenu/ContentPanel/ContentBody/LivePreview/PreviewCanvas/BrightnessDim") as ColorRect
 	_check(dynamic_preview != null, "动态背景预览使用唱片背景结构而非血条占位素材")
-	_check(brightness_dim != null and is_equal_approx(brightness_dim.color.a, 0.65),
-		"背景预览亮度蒙版与 Gameplay 计算一致",
+	_check(brightness_dim != null and is_equal_approx(brightness_dim.color.a, 0.40),
+		"背景预览亮度蒙版与 Gameplay 计算一致，100% 档位为零蒙版",
 		str(brightness_dim.color.a) if brightness_dim else "null")
 
 	settings.background_mode = "图片"

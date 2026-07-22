@@ -63,12 +63,11 @@ func _initialize() -> void:
 	song_select.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	song_select.size = Vector2(1920, 1080)
 	root.add_child(song_select)
-	# 首次运行可能要建立新版搜索侧车；等待真实加载完成，不依赖固定两帧竞态。
-	for _frame in 300:
+	# 首次运行可能因曲库缓存版本升级触发重扫；必须等待加载任务真正结束，
+	# 不能仅凭延迟显示的遮罩尚未出现就提前进入断言。
+	var load_deadline := Time.get_ticks_msec() + 60000
+	while bool(song_select.get("_song_load_pending")) and Time.get_ticks_msec() < load_deadline:
 		await process_frame
-		var loading := song_select.get_node_or_null("SongLoadingOverlay") as Control
-		if loading != null and not loading.visible:
-			break
 	var songs: Array = []
 	for i in 8:
 		songs.append(_song(i))
@@ -193,6 +192,7 @@ func _initialize() -> void:
 	song_select.set("favorites_mode", false)
 	song_select.set("filter_style", "")
 	song_select.set("filter_star", 0)
+	song_select.set("filter_speed", "all")
 	song_select.call("_submit_search", "凤凰传奇")
 	for _frame in 30:
 		await process_frame

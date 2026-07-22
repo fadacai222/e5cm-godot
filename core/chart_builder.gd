@@ -26,7 +26,7 @@ static func build(events: Array, beat_to_sec: Callable) -> Dictionary:
 		var type := str(e.get("type", "tap"))
 
 		if type == "tap":
-			notes.append(JudgeSystem.JudgeNote.new(track, "tap", st, st, []))
+			notes.append(JudgeSystem.JudgeNote.new(track, "tap", st, st, [], sb, sb))
 			point_count += 1
 			continue
 
@@ -39,7 +39,7 @@ static func build(events: Array, beat_to_sec: Callable) -> Dictionary:
 			if st <= t and t <= ed + 1e-6:
 				tick_secs.append(t)
 
-		notes.append(JudgeSystem.JudgeNote.new(track, "hold", st, ed, tick_secs))
+		notes.append(JudgeSystem.JudgeNote.new(track, "hold", st, ed, tick_secs, sb, eb))
 		point_count += 1 + tick_secs.size()
 
 	var total_score := maxi(0, point_count * 5000)

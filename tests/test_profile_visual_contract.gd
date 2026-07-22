@@ -15,7 +15,7 @@ const AUTOLOADS := [
 const SONG_NAME := "As_If_lts_Your_Last_mv_1706"
 const ORIGINAL_WELCOME := "e舞成名重构版（测试）为非盈利性的游戏；\n本游戏软件为交流、学习、测试使用，如有侵权，请率先联系我们。\n如果你有意参与我们的开发项目；\n请进人QQ群：1084318862\n进群后联系Emma_H。"
 const ORIGINAL_SOFTWARE_LINES := [
-	"游戏版本：e舞成名重构版4.12.1",
+	"游戏版本：godot-2.0.3",
 	"开发团队：程序工程师/策划/游戏制作人：良    UE/UI设计/策划：Emma_H（林曦）",
 	"特别鸣谢（排名不分先后）：",
 	"Cyan（音效提供）|  飞翔e舞模拟器（曲谱资源提供）",

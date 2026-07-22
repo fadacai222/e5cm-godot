@@ -5,6 +5,12 @@ extends Node2D
 ## Stage 场景可绑定 board.png 的 alpha 轮廓，让每根频谱线从唱片盘真实边缘起跳。
 
 const BARS := 200
+# 画面仍保留 200 根线，但 FFT 只采 64 个频段并插值；频谱最多 60Hz 更新。
+# 原实现每个 SpectrumRing 每渲染帧做 200 次频段查询 + 400 次 draw_line，
+# 高刷下主要卡 CPU/Canvas 提交，5090 再强也无法替主线程完成这些调用。
+const ANALYZER_BANDS := 64
+const UPDATE_HZ := 60.0
+const UPDATE_INTERVAL := 1.0 / UPDATE_HZ
 const FREQ_LO := 55.0
 const FREQ_HI := 9500.0
 const RISE := 0.78
@@ -44,19 +50,25 @@ var _edge_rotation := 0.0
 var _analyzer_retry := 0.0
 var _silence_elapsed := 0.0
 var _bass_peak := 0.0
+var _update_accumulator := UPDATE_INTERVAL
 var paused := false
+var enabled := true
 
 
 func _ready() -> void:
 	_levels.resize(BARS)
-	_ensure_analyzer()
+	visible = enabled
+	set_process(enabled)
+	if enabled:
+		_ensure_analyzer()
 
 
 func bind_audio_player(player: AudioStreamPlayer) -> void:
 	_source_player = player
-	_ensure_analyzer()
+	if enabled:
+		_ensure_analyzer()
 	if _source_player != null:
-		_source_player.bus = SPECTRUM_BUS
+		_source_player.bus = SPECTRUM_BUS if enabled else "Master"
 
 
 func set_edge_texture(texture: Texture2D, target_size: Vector2) -> void:
@@ -93,8 +105,8 @@ func set_edge_texture(texture: Texture2D, target_size: Vector2) -> void:
 
 
 func set_edge_rotation(radians: float) -> void:
+	# _process() 的 60Hz 重绘会带上最新轮廓角度；这里不再每个渲染帧额外排队重绘。
 	_edge_rotation = radians
-	queue_redraw()
 
 
 func has_edge_profile() -> bool:
@@ -103,6 +115,31 @@ func has_edge_profile() -> bool:
 
 func set_paused(value: bool) -> void:
 	paused = value
+
+
+func set_enabled(value: bool) -> void:
+	enabled = value
+	visible = value
+	set_process(value)
+	_update_accumulator = UPDATE_INTERVAL
+	if _source_player != null:
+		# 真正绕开 FFT 总线；仅隐藏节点仍会让音频线程继续做频谱分析。
+		_source_player.bus = SPECTRUM_BUS if value else "Master"
+	if value:
+		_ensure_analyzer()
+		queue_redraw()
+	else:
+		_bass_peak = 0.0
+		for i in _levels.size():
+			_levels[i] = 0.0
+
+
+func is_enabled_for_test() -> bool:
+	return enabled and visible and is_processing()
+
+
+func bass_energy_for_visuals() -> float:
+	return clampf(_bass_peak, 0.0, 1.0)
 
 
 func _ensure_analyzer() -> void:
@@ -129,11 +166,16 @@ func _ensure_analyzer() -> void:
 
 
 func _process(delta: float) -> void:
-	if paused:
+	if paused or not enabled:
 		return
-	_angle += rotate_speed * delta
+	_update_accumulator += delta
+	if _update_accumulator < UPDATE_INTERVAL:
+		return
+	var sample_delta := _update_accumulator
+	_update_accumulator = fmod(_update_accumulator, UPDATE_INTERVAL)
+	_angle += rotate_speed * sample_delta
 	if _instance == null:
-		_analyzer_retry += delta
+		_analyzer_retry += sample_delta
 		if _analyzer_retry >= ANALYZER_RETRY_SEC:
 			_analyzer_retry = 0.0
 			_ensure_analyzer()
@@ -141,16 +183,23 @@ func _process(delta: float) -> void:
 	measured.resize(BARS)
 	var peak := 0.0
 	if _instance != null:
-		for i in BARS:
-			var f0 := FREQ_LO * pow(FREQ_HI / FREQ_LO, float(i) / float(BARS))
-			var f1 := FREQ_LO * pow(FREQ_HI / FREQ_LO, float(i + 1) / float(BARS))
+		var sampled := PackedFloat32Array()
+		sampled.resize(ANALYZER_BANDS)
+		for i in ANALYZER_BANDS:
+			var f0 := FREQ_LO * pow(FREQ_HI / FREQ_LO, float(i) / float(ANALYZER_BANDS))
+			var f1 := FREQ_LO * pow(FREQ_HI / FREQ_LO, float(i + 1) / float(ANALYZER_BANDS))
 			var magnitude := _instance.get_magnitude_for_frequency_range(
 				f0, f1, AudioEffectSpectrumAnalyzerInstance.MAGNITUDE_MAX).length()
 			var db := linear_to_db(maxf(magnitude, 0.0000001))
 			var normalized := clampf((db - ANALYZER_DB_FLOOR) /
 				(ANALYZER_DB_CEILING - ANALYZER_DB_FLOOR), 0.0, 1.0)
-			measured[i] = pow(normalized, 0.78)
-			peak = maxf(peak, measured[i])
+			sampled[i] = pow(normalized, 0.78)
+			peak = maxf(peak, sampled[i])
+		for i in BARS:
+			var sample_pos := float(i) * float(ANALYZER_BANDS - 1) / float(BARS - 1)
+			var left := int(floor(sample_pos))
+			var right := mini(left + 1, ANALYZER_BANDS - 1)
+			measured[i] = lerpf(sampled[left], sampled[right], sample_pos - float(left))
 	var source_is_playing := _source_player != null and _source_player.playing
 	if source_is_playing and peak < 0.015:
 		_silence_elapsed += delta
